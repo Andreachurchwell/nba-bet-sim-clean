@@ -117,4 +117,4 @@ Justice Through Code | AISE 2026 Cohort
 📍 Selmer, Tennessee
 💬 “From dental assistant to full-stack Python developer.”
 
-<div align="center"> <sub>© 2025 CourtCash — Built for learning, not gambling. 🏀</sub> </div> ```
+<div align="center"> <sub>© 2025 CourtCash — Built for learning, not gambling. 🏀</sub> </div> 
