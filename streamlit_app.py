@@ -194,27 +194,44 @@ with tab1:
     except requests.RequestException as e:
         st.error(f"Backend error: {e}")
 
-# ========== TAB 2: RECENT RESULTS ==========
+# ========== TAB 2: RECENT RESULTS (robust + debug) ==========
 with tab2:
     st.subheader("Final Scores (last N days)")
-    colA, colB = st.columns([3, 1])
+
+    colA, colB, colC = st.columns([3, 1, 1])
     with colA:
-        days = st.slider("Days back", min_value=1, max_value=30, value=7)
+        days = st.slider("Days back", min_value=1, max_value=30, value=3)
     with colB:
-        if st.button("↻ Force refresh"):
+        force = st.button("↻ Force refresh")
+        if force:
             st.cache_data.clear()
-            st.rerun()
+    with colC:
+        debug = st.toggle("Debug")
 
     try:
-        results = fetch_json(f"{API}/results", params={"days": days})
+        # optional cache-buster so we KNOW we're not seeing a stale response
+        params = {"days": int(days)}
+        if force:
+            import time
+            params["_"] = int(time.time())
+
+        # do the request (uses cached fetch_json unless force added)
+        results = fetch_json(f"{API}/results", params=params)
+
+        if debug:
+            st.code(
+                f"GET {API}/results?days={days}\n\n"
+                f"Response preview:\n{str(results)[:1200]}..."
+            )
+
         count = results.get("count", 0)
         games = results.get("games", [])
 
-        st.caption(f"{count} final games")
-        if count == 0 or not games:
+        st.caption(f"{count} final games returned")
+        if not games:
             st.info(
-                "No final games found in this date range — try a smaller range (2–3 days). "
-                "The public API may lag posting results."
+                "No final games found in this window. Try 2–3 days. "
+                "The public API sometimes lags posting finals."
             )
         else:
             rows = []
@@ -234,8 +251,14 @@ with tab2:
                 st.success(f"Saved {len(df_r)} rows to **{fname}**")
 
     except requests.HTTPError as e:
-        st.error(f"Backend error: {e}\nURL: {API}/results?days={days}")
+        st.error(f"HTTP error from backend: {e}\nURL: {API}/results?days={days}")
+        if debug and getattr(e, "response", None) is not None:
+            st.code(e.response.text)
     except Exception as e:
-        st.exception(e)
+        # show full stack in debug to catch any hidden issues
+        if debug:
+            st.exception(e)
+        else:
+            st.error(f"Unexpected error in Results tab: {e}")
 
 
