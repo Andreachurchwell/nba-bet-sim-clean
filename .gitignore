@@ -1,2 +1,40 @@
+# --- Python / FastAPI / Streamlit Project Ignore Rules ---
+
+# Virtual environment
 venv/
-venv/
+.env
+
+# Byte-compiled / cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local data (generated or private)
+data/*.csv
+data/*.json
+*.db
+
+# Streamlit config / cache
+.streamlit/
+.streamlit/secrets.toml
+
+# VS Code / IDE settings
+.vscode/
+.idea/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Build / dist
+build/
+dist/
+*.egg-info/
+
+# OS junk
+*.swp
+*.bak
