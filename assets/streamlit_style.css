@@ -1,0 +1,60 @@
+:root {
+  --cc-bg: #f2f2f2;
+  --cc-surface: #ffffff;
+  --cc-surface-2: #e5e5e5;
+  --cc-text: #1a1a1a;
+  --cc-subtle: #555;
+  --cc-accent: #ff6a1a;
+}
+
+html, body, [data-testid="stAppViewContainer"] {
+  background: var(--cc-bg) !important;
+  color: var(--cc-text);
+}
+
+.block-container { padding-top: 1.5rem; }
+
+/* Headline & Tagline */
+.headline h1 {
+  margin: 0 0 .25rem 0;
+  font-weight: 800;
+}
+.headline .tagline {
+  color: var(--cc-subtle);
+}
+
+/* Tabs underline */
+[data-baseweb="tab-list"] [role="tab"][aria-selected="true"]::after {
+  background: var(--cc-accent) !important;
+}
+
+/* Metric color */
+[data-testid="stMetricValue"] {
+  color: var(--cc-accent);
+  font-weight: 800;
+}
+
+/* Game cards */
+.game-card {
+  background: var(--cc-surface);
+  border: 1px solid #ddd;
+  border-radius: 14px;
+  padding: 12px 14px;
+  box-shadow: 0 4px 10px rgba(0,0,0,.05);
+  margin-bottom: 12px;
+}
+
+/* Buttons */
+.stButton>button {
+  background: var(--cc-accent) !important;
+  border: none; color: white !important; font-weight: 700;
+  border-radius: 10px; padding: 6px 12px;
+}
+.stButton>button:hover { filter: brightness(1.1); }
+
+/* Dataframe */
+[data-testid="stDataFrame"] {
+  background: var(--cc-surface-2) !important;
+  border-radius: 12px;
+  border: 1px solid #ccc;
+}
