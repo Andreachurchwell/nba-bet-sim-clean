@@ -38,3 +38,26 @@ dist/
 # OS junk
 *.swp
 *.bak
+
+
+# env & secrets
+.env
+*.env
+*.key
+*.pem
+
+# python
+__pycache__/
+*.pyc
+
+# venvs
+venv/
+.env*/  # conda/poetry env folders sometimes
+
+# streamlit local state
+.streamlit/
+
+# local data
+data/*.csv
+data/*.json
+data/*.db
