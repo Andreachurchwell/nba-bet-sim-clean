@@ -1,6 +1,6 @@
 [theme]
 base="light"
-primaryColor="#FF7B47"
-backgroundColor="#F2F2F4"
-secondaryBackgroundColor="#FFFFFF"
-textColor="#1F1F1F"
+primaryColor="#ff5c9a"             # hot pink accent
+backgroundColor="#f7f2fa"          # soft lilac background
+secondaryBackgroundColor="#ffffff" # white cards
+textColor="#1f1227"                # plum ink

@@ -1,73 +1,142 @@
-/* assets/streamlit_style.css */
+/* =========================================================
+   SHEBETS — Lilac / Purple / Gold Theme for Streamlit
+   ========================================================= */
+
+/* ---------- Global Theme Variables ---------- */
 :root {
-  --bg: #F2F2F4;        /* light gray */
-  --card: #FFFFFF;
-  --ink: #1F1F1F;
-  --muted: #6A6A6A;
-  --accent: #FF7B47;    /* warm orange */
-  --accent-2: #F4A9A8;  /* coral pink */
-  --ring: rgba(255,123,71,.35);
+  --bg: #f6f1fb;          /* main background (soft lilac) */
+  --card: #ffffff;        /* card + container background */
+  --ink: #1f1227;         /* main text: deep plum */
+  --muted: #7b6f86;       /* muted mauve-gray */
+
+  --accent: #9b5de5;      /* primary purple accent */
+  --accent-2: #e9d5ff;    /* light lilac accent/shadows */
+
+  --gold: #cfaf5b;        /* lakers-y gold */
+  --ring: rgba(155, 93, 229, 0.35); /* purple focus ring */
 }
 
-/* page */
+/* ---------- App Background ---------- */
 .stApp {
-  background: var(--bg);
+  background: radial-gradient(
+    circle at top left,
+    #fbe8ff 0,
+    #f6f1fb 40%,
+    #f0e8fa 100%
+  );
   color: var(--ink);
 }
 
-/* tighten the top padding a bit */
-.block-container { padding-top: 1.2rem; }
+/* ---------- Container Padding ---------- */
+.block-container {
+  padding-top: 1.2rem;
+}
 
-/* headline wrap beside logo */
+/* ---------- Headline + Tagline ---------- */
 .headline h1 {
-  margin: 0 0 .25rem 0;
+  margin: 0 0 0.25rem 0;
   font-size: 2.2rem;
   font-weight: 800;
-  letter-spacing: .2px;
+  letter-spacing: 0.2px;
+
+  /* purple → gold gradient text */
+  background: linear-gradient(90deg, #9b5de5, #ffcf6b);
+  background-clip: text;
+  -webkit-background-clip: text;
+  color: transparent;
 }
+
 .headline .tagline {
-  margin: .25rem 0 0 0;
+  margin: 0.25rem 0 0 0;
   color: var(--muted);
   font-weight: 500;
+  font-size: 0.95rem;
 }
 
-/* game card */
+/* ---------- Game Cards ---------- */
 .game-card {
-  background: var(--card);
-  border: 1px solid #E8E8EC;
-  border-radius: 16px;
+  background: radial-gradient(circle at top left, #f0ddff 0, #ffffff 55%);
+  border: 1px solid rgba(233, 213, 255, 0.8);
+  border-radius: 18px;
   padding: 14px 16px;
-  box-shadow: 0 4px 20px rgba(0,0,0,.04);
-  margin: 10px 0 6px 0;
-}
-.game-top {
-  display:flex; align-items:center; justify-content:space-between;
-  font-size: 1.05rem;
-}
-.game-top .status {
-  color: var(--accent);
-  font-weight: 700;
-}
-.game-sub { color: var(--muted); margin-top: 4px; }
-.time { color: #444; margin-top: 6px; }
+  margin: 10px 0;
 
-/* buttons */
-.stButton > button {
-  border-radius: 12px !important;
-  border: 1px solid #E8E8EC !important;
-  background: var(--card) !important;
-  color: var(--ink) !important;
-  padding: .5rem .9rem !important;
+  /* slight depth + soft glow */
+  box-shadow:
+    0 10px 30px rgba(0, 0, 0, 0.06),
+    0 0 15px rgba(207, 175, 91, 0.18);
 }
+
+.game-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 1.05rem;
+  color: var(--ink);
+}
+
+/* gold pill badge for status (Scheduled / Final) */
+.game-top .status {
+  color: var(--gold);
+  font-weight: 700;
+  font-size: 0.8rem;
+
+  padding: 0.18rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(207, 175, 91, 0.12);
+  border: 1px solid rgba(207, 175, 91, 0.45);
+  box-shadow: 0 0 8px rgba(207, 175, 91, 0.2);
+}
+
+.game-sub {
+  color: var(--muted);
+  margin-top: 4px;
+  font-size: 0.9rem;
+}
+
+.time {
+  color: #8b6fcf; /* soft purple for time row */
+  margin-top: 6px;
+  font-size: 0.85rem;
+}
+
+/* ---------- Buttons ---------- */
+.stButton > button {
+  border-radius: 999px !important;
+  border: 1px solid rgba(233, 213, 255, 0.9) !important;
+
+  /* purple → gold button gradient */
+  background: linear-gradient(135deg, #9b5de5, #ffcf6b) !important;
+  color: #fff !important;
+
+  padding: 0.5rem 1.1rem !important;
+  font-weight: 600 !important;
+  transition: all 0.15s ease-in-out !important;
+}
+
 .stButton > button:hover {
-  border-color: var(--accent) !important;
+  border-color: #ffffff !important;
+  box-shadow: 0 0 0 3px var(--ring) !important;
+  transform: translateY(-1px);
+}
+
+/* ---------- Input Controls (focus ring) ---------- */
+input,
+select,
+textarea {
+  border-radius: 10px !important;
+  box-shadow: none !important;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none !important;
   box-shadow: 0 0 0 3px var(--ring) !important;
 }
 
-/* metrics */
-[data-baseweb="tag"] { border-radius: 10px; }
-
-/* inputs focus ring */
-input, select, textarea {
-  border-radius: 10px !important;
+/* ---------- Dataframe / Tables ---------- */
+.dataframe {
+  border-radius: 12px !important;
+  overflow: hidden !important;
 }
