@@ -1,60 +1,73 @@
+/* assets/streamlit_style.css */
 :root {
-  --cc-bg: #f2f2f2;
-  --cc-surface: #ffffff;
-  --cc-surface-2: #e5e5e5;
-  --cc-text: #1a1a1a;
-  --cc-subtle: #555;
-  --cc-accent: #ff6a1a;
+  --bg: #F2F2F4;        /* light gray */
+  --card: #FFFFFF;
+  --ink: #1F1F1F;
+  --muted: #6A6A6A;
+  --accent: #FF7B47;    /* warm orange */
+  --accent-2: #F4A9A8;  /* coral pink */
+  --ring: rgba(255,123,71,.35);
 }
 
-html, body, [data-testid="stAppViewContainer"] {
-  background: var(--cc-bg) !important;
-  color: var(--cc-text);
+/* page */
+.stApp {
+  background: var(--bg);
+  color: var(--ink);
 }
 
-.block-container { padding-top: 1.5rem; }
+/* tighten the top padding a bit */
+.block-container { padding-top: 1.2rem; }
 
-/* Headline & Tagline */
+/* headline wrap beside logo */
 .headline h1 {
   margin: 0 0 .25rem 0;
+  font-size: 2.2rem;
   font-weight: 800;
+  letter-spacing: .2px;
 }
 .headline .tagline {
-  color: var(--cc-subtle);
+  margin: .25rem 0 0 0;
+  color: var(--muted);
+  font-weight: 500;
 }
 
-/* Tabs underline */
-[data-baseweb="tab-list"] [role="tab"][aria-selected="true"]::after {
-  background: var(--cc-accent) !important;
-}
-
-/* Metric color */
-[data-testid="stMetricValue"] {
-  color: var(--cc-accent);
-  font-weight: 800;
-}
-
-/* Game cards */
+/* game card */
 .game-card {
-  background: var(--cc-surface);
-  border: 1px solid #ddd;
-  border-radius: 14px;
-  padding: 12px 14px;
-  box-shadow: 0 4px 10px rgba(0,0,0,.05);
-  margin-bottom: 12px;
+  background: var(--card);
+  border: 1px solid #E8E8EC;
+  border-radius: 16px;
+  padding: 14px 16px;
+  box-shadow: 0 4px 20px rgba(0,0,0,.04);
+  margin: 10px 0 6px 0;
+}
+.game-top {
+  display:flex; align-items:center; justify-content:space-between;
+  font-size: 1.05rem;
+}
+.game-top .status {
+  color: var(--accent);
+  font-weight: 700;
+}
+.game-sub { color: var(--muted); margin-top: 4px; }
+.time { color: #444; margin-top: 6px; }
+
+/* buttons */
+.stButton > button {
+  border-radius: 12px !important;
+  border: 1px solid #E8E8EC !important;
+  background: var(--card) !important;
+  color: var(--ink) !important;
+  padding: .5rem .9rem !important;
+}
+.stButton > button:hover {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 3px var(--ring) !important;
 }
 
-/* Buttons */
-.stButton>button {
-  background: var(--cc-accent) !important;
-  border: none; color: white !important; font-weight: 700;
-  border-radius: 10px; padding: 6px 12px;
-}
-.stButton>button:hover { filter: brightness(1.1); }
+/* metrics */
+[data-baseweb="tag"] { border-radius: 10px; }
 
-/* Dataframe */
-[data-testid="stDataFrame"] {
-  background: var(--cc-surface-2) !important;
-  border-radius: 12px;
-  border: 1px solid #ccc;
+/* inputs focus ring */
+input, select, textarea {
+  border-radius: 10px !important;
 }

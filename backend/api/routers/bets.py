@@ -10,10 +10,18 @@ from datetime import datetime, timedelta  # <-- add timedelta
 
 router = APIRouter(prefix="/bets", tags=["bets"])
 
-DATA_DIR = Path("data")
-DATA_DIR.mkdir(exist_ok=True)
+# DATA_DIR = Path("data")
+# DATA_DIR.mkdir(exist_ok=True)
+# LEDGER = DATA_DIR / "ledger.csv"
+# WALLET = DATA_DIR / "wallet.json"
+
+# always write under the repo root, no matter where uvicorn is launched from
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+DATA_DIR = PROJECT_ROOT / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 LEDGER = DATA_DIR / "ledger.csv"
 WALLET = DATA_DIR / "wallet.json"
+RESULTS_CSV = DATA_DIR / "results_last_3d.csv"
 
 # ensure ledger file exists with headers
 if not LEDGER.exists():
@@ -76,6 +84,7 @@ def place_bet(b: PlaceBet):
 
     bet_id = f"bet-{int(datetime.utcnow().timestamp()*1000)}"
     placed_at = datetime.utcnow().isoformat()
+    # print("DEBUG place_bet writing to LEDGER =", LEDGER)
     append_ledger([placed_at, bet_id, b.date, b.game_id, b.matchup, b.pick.upper(), stake, "open", ""])
 
     return {"status":"ok", "balance": w["balance"], "bet_id": bet_id}
@@ -83,34 +92,36 @@ def place_bet(b: PlaceBet):
 @router.post("/settle")
 def settle_bets(days: int = 3):
     """
-    Settle open bets by looking up finished games in the last `days`.
-    Call this after games are FINAL.
+    Settle open bets using results_last_3d.csv in the data folder.
+    Matches on (date, matchup) and compares winner to pick.
     """
     try:
         ledger = read_ledger()            # list[dict] from CSV
         wallet = read_wallet()
         changed = 0
 
-        # dates to check (today back `days-1`)
-        today = datetime.now().date()
-        dates = [(today - timedelta(days=i)).isoformat() for i in range(days)]
+        # load results from CSV
+        if not RESULTS_CSV.exists():
+            return {"settled": 0, "error": "results_last_3d.csv not found in data folder"}
 
-        # fetch games (sync client)
-        try:
-            raw_games = fetch_games_for_dates(dates) or []
-        except Exception:
-            raw_games = []
+        results_rows: list[Dict[str, Any]] = []
+        with RESULTS_CSV.open("r", newline="", encoding="utf-8") as f:
+            reader = csv.DictReader(f)
+            for r in reader:
+                results_rows.append(r)
 
-        # map by id for quick lookup
-        game_map = {}
-        for g in raw_games:
-            try:
-                game_map[int(g.get("id"))] = g
-            except Exception:
+        # build a lookup: (date, matchup) -> result row
+        results_map: Dict[tuple, Dict[str, Any]] = {}
+        for r in results_rows:
+            r_date = (r.get("date") or "").strip()
+            r_matchup = (r.get("matchup") or "").strip()
+            if not r_date or not r_matchup:
                 continue
+            key = (r_date, r_matchup)
+            results_map[key] = r
 
-        # update rows in memory
-        new_rows = []
+        new_rows: list[Dict[str, Any]] = []
+
         for row in ledger:
             # ensure dict-like row
             if not isinstance(row, dict):
@@ -118,47 +129,40 @@ def settle_bets(days: int = 3):
                 continue
 
             status_now = row.get("status", "")
-            # already settled?
+            # already settled? (only touch open bets)
             if status_now and status_now != "open":
                 new_rows.append(row)
                 continue
 
             # parse required fields safely
+            row_date = (row.get("date") or "").strip()
+            row_matchup = (row.get("matchup") or "").strip()
             try:
-                gid = int(row.get("game_id", 0))
                 pick = (row.get("pick") or "").upper()
                 stake = float(row.get("stake", 0))
             except Exception:
-                # broken row, skip
                 new_rows.append(row)
                 continue
 
-            g = game_map.get(gid)
-            if not g:
-                # no result yet
+            if not row_date or not row_matchup:
                 new_rows.append(row)
                 continue
 
-            # only settle when FINAL
-            status_api = (g.get("status") or "").lower()
-            if status_api != "final":
+            # look up result by (date, matchup)
+            result = results_map.get((row_date, row_matchup))
+            if not result:
+                # no result in CSV for this game
                 new_rows.append(row)
                 continue
 
-            home_score = g.get("home_team_score")
-            away_score = g.get("visitor_team_score")
-            if home_score is None or away_score is None:
+            # only settle if status contains "final"
+            status_api = (result.get("status") or "").lower()
+            if "final" not in status_api:
                 new_rows.append(row)
                 continue
 
-            # compute winner
-            try:
-                winner = (
-                    g.get("home_team", {}).get("abbreviation")
-                    if float(home_score) > float(away_score)
-                    else g.get("visitor_team", {}).get("abbreviation")
-                )
-            except Exception:
+            winner = (result.get("winner") or "").upper()
+            if not winner:
                 new_rows.append(row)
                 continue
 
@@ -195,6 +199,5 @@ def settle_bets(days: int = 3):
         write_wallet(wallet)
         return {"settled": changed, "new_balance": wallet.get("balance", 0)}
     except Exception as e:
-        # never blow up the client—report a clean error
         return {"settled": 0, "error": f"{type(e).__name__}: {e}"}
 
