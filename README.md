@@ -1,11 +1,16 @@
-<div align="center"> <img src="assets/she_bets_logo.png" alt="SheBETS Logo" width="220"/>
-🏀 SheBETS — NBA Betting Simulator (MVP)
+<p align="center">
+  <img src="assets/courtcash_logo.svg" alt="SheBETS Logo" width="220" />
+</p>
 
-Pick winners. Practice analytics. Fake bankroll — real learning.
+<h1 align="center">🏀 SheBETS — NBA Betting Simulator (MVP)</h1>
 
-Built with FastAPI (backend) + Streamlit (frontend)
+<p align="center">
+  Pick winners. Practice analytics. Fake bankroll — real learning.
+</p>
 
-</div>
+<p align="center">
+  Built with <strong>FastAPI</strong> (backend) + <strong>Streamlit</strong> (frontend)
+</p>
 📋 Overview
 
 SheBETS is a class project that simulates NBA betting using live game data from the balldontlie API.
