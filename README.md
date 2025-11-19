@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/she_bets_logo.svg" alt="SheBETS Logo" width="220" />
+  <img src="assets/she_bets_logo.png" alt="SheBETS Logo" width="220" />
 </p>
 
 <h1 align="center">🏀 SheBETS — NBA Betting Simulator (MVP)</h1>
