@@ -1,120 +1,178 @@
-<div align="center">
-  <img src="assets/courtcash_logo.svg" alt="CourtCash Logo" width="220"/>
+<div align="center"> <img src="assets/courtcash_logo.svg" alt="SheBETS Logo" width="220"/>
+🏀 SheBETS — NBA Betting Simulator (MVP)
 
-  # 🏀 CourtCash — NBA Betting Simulator (MVP)
-  **Practice picking winners. Fake bankroll. Real learning.**
+Pick winners. Practice analytics. Fake bankroll — real learning.
 
-  Built with **FastAPI** (backend) + **Streamlit** (frontend)
+Built with FastAPI (backend) + Streamlit (frontend)
+
 </div>
+📋 Overview
 
----
+SheBETS is a class project that simulates NBA betting using live game data from the balldontlie API.
 
-## 📋 Overview
+Users can:
 
-**CourtCash** is a class project that simulates NBA game betting using **real API data**.  
-You can browse current and past games, place virtual bets, and track your fake bankroll — all through a sleek Streamlit interface connected to a FastAPI backend.
+View today’s games
 
-This project was built as a hands-on way to reinforce full-stack Python concepts covered in class over the past six weeks:
-- REST APIs with FastAPI  
-- Data persistence with CSV/JSON  
-- Streamlit UI design and caching  
-- Modular backend structure (`core`, `services`, `routers`)  
-- Practical, applied Python development
+Place fake bets
 
----
+Track their virtual bankroll
 
-## ⚙️ Features
+Settle bets based on real results
 
-✅ View NBA game schedules and results  
-✅ Place fake bets and track balance  
-✅ Wallet auto-updates after each bet  
-✅ Settle bets once games finish  
-✅ Export results/schedules to CSV  
-✅ Clean dark/light Streamlit theme  
-✅ Organized modular FastAPI backend  
+Export data
 
----
+See their game history and stats
 
-## 🧩 Project Structure
+This project reinforces full-stack concepts from the JTC AISE program:
 
-nba-bet-sim-clean/
+REST API design with FastAPI
+
+Modular architecture (api, services, core)
+
+Clean URL routing
+
+CSV/JSON persistence (wallet + bet ledger)
+
+Streamlit UI design and event-driven programming
+
+Using real-world API data
+
+Logging, error handling, and request flow
+
+⚙️ Features
+✔ Functional Features
+
+Browse today’s and recent NBA games
+
+Place bets with a virtual bankroll
+
+Settle bets after final scores update
+
+Auto-updating wallet on every win/loss
+
+CSV exports for:
+
+Bet ledger
+
+Game results
+
+Schedules
+
+Local persistence using CSV + JSON
+
+✔ UX & UI Enhancements
+
+Clean, custom Streamlit theme
+
+Soft pink SheBETS branding
+
+Organized tabs (Games, Bets, Wallet, Results)
+
+Form-based UI for consistent inputs
+
+✔ Backend Architecture
+
+FastAPI with modular structure:
+
+api/ → Routers (/games, /bets, /wallet)
+
+services/ → External API client (balldontlie)
+
+core/ → Config, utils, constants
+
+data/ → Local CSV + wallet store
+
+Separation of:
+
+Business logic
+
+Data access
+
+API transport
+
+🧩 Project Structure
+shebets/
 │
-├── backend/ # FastAPI backend (API + logic)
-│ ├── api/routers/ # Routes for /games and /bets
-│ ├── core/ # Config + setup
-│ ├── services/ # API client for NBA data
-│ └── ...
+├── backend/                   # FastAPI backend
+│   ├── api/
+│   │   ├── routers/
+│   │   │   ├── bets.py
+│   │   │   ├── games.py
+│   │   │   └── wallet.py
+│   │   └── main.py            # FastAPI entrypoint
+│   ├── services/              # Balldontlie API client + helpers
+│   ├── core/                  # Settings, config, utils
+│   └── data/                  # CSV bet ledger + JSON wallet
 │
-├── streamlit/ # Streamlit frontend
-│ └── streamlit_style.css # Custom theme styling
+├── streamlit/                 # Frontend assets
+│   ├── streamlit_style.css
+│   └── components/ (optional)
 │
-├── assets/ # Logos, icons, visuals
-│ └── courtcash_logo.svg
-│
-├── data/ # Local CSV and wallet data
-│
-├── streamlit_app.py # Main Streamlit entry point
-├── requirements.txt # Dependencies
-├── .gitignore
+├── streamlit_app.py           # Streamlit UI
+├── requirements.txt
+├── assets/
+│   └── courtcash_logo.svg     # Temporary placeholder logo
 └── README.md
 
+🧠 Tech Stack
+Layer	Technology
+Frontend	Streamlit
+Backend	FastAPI
+API Data	balldontlie NBA API
+Persistence	CSV (bets), JSON (wallet)
+Language	Python 3.12
+UX	Custom streamlit CSS + soft-pink theme
+🚀 Running Locally
+1️⃣ Clone the repo
+git clone https://github.com/Andreachurchwell/shebets.git
+cd shebets
 
-
-## 🧠 Tech Stack
-
-| Layer | Technology |
-|-------|-------------|
-| **Frontend** | Streamlit |
-| **Backend** | FastAPI |
-| **Data** | NBA public API + CSV/JSON |
-| **Language** | Python 3.12 |
-| **UI Styling** | Custom CSS (Streamlit theme) |
-
----
-
-## 🚀 Running Locally
-
-### 1️⃣ Clone the repo
-```bash
-git clone https://github.com/Andreachurchwell/nba-bet-sim-clean.git
-cd nba-bet-sim-clean
-
-2️⃣ Create and activate a virtual environment
+2️⃣ Create & activate venv
 python -m venv venv
-venv\Scripts\activate   # Windows
+venv\Scripts\activate        # Windows
 # OR
-source venv/bin/activate  # Mac/Linux
+source venv/bin/activate     # Mac/Linux
 
 3️⃣ Install dependencies
 pip install -r requirements.txt
 
 4️⃣ Start the FastAPI backend
 cd backend
-uvicorn main:app --reload
+uvicorn api.main:app --reload
 
-5️⃣ Start the Streamlit frontend (in a new terminal)
+
+(Updated to match your actual working command as of today.)
+
+5️⃣ Start the Streamlit frontend (new terminal)
 streamlit run streamlit_app.py
 
-```
----
 🧰 Future Enhancements
+🔧 Technical
 
- Player prop bets
+Move from CSV/JSON → SQLite or PostgreSQL
 
- Real-time odds integration
+Real user accounts with authentication
 
- SQLite or Postgres backend
+Background job to auto-settle bets
 
- Team logos and standings view
+Full service separation (wallet service, bet service, game service)
 
- User authentication
+🔮 Features
 
- ---
- 👩‍💻 Author
+Player props
+
+Team logos + standings screen
+
+Analytics dashboard (win rate, bet history, trends)
+
+Real odds integration (TheOddsAPI or similar)
+
+👩‍💻 Author
 
 Andrea Churchwell
-Justice Through Code | AISE 2026 Cohort
+Justice Through Code — AISE 2026 Cohort
 📍 Selmer, Tennessee
-💬 “From dental assistant to full-stack Python developer.”
+💬 "From dental assistant to applied AI engineer — one project at a time."
 
-<div align="center"> <sub>© 2025 CourtCash — Built for learning, not gambling. 🏀</sub> </div> 
+<div align="center"> <sub>© 2025 SheBETS — For learning and fun. Not for real gambling. 🏀</sub> </div>
