@@ -1,4 +1,4 @@
-<div align="center"> <img src="assets/courtcash_logo.svg" alt="SheBETS Logo" width="220"/>
+<div align="center"> <img src="assets/she_bets_logo.svg" alt="SheBETS Logo" width="220"/>
 🏀 SheBETS — NBA Betting Simulator (MVP)
 
 Pick winners. Practice analytics. Fake bankroll — real learning.
