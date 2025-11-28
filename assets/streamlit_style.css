@@ -140,3 +140,101 @@ textarea:focus {
   border-radius: 12px !important;
   overflow: hidden !important;
 }
+
+/* ---------- Sliders (bet amount, days back) ---------- */
+.stSlider > div[data-baseweb="slider"] > div {
+  color: var(--accent) !important;  /* thumb + filled track */
+}
+
+/* Optional: rounder track + softer background */
+.stSlider > div[data-baseweb="slider"] [role="slider"] {
+  border-radius: 999px !important;
+}
+
+.stSlider > div[data-baseweb="slider"] > div > div {
+  border-radius: 999px !important;
+}
+
+
+/* ---------- Metric (Wallet card) ---------- */
+.stMetric {
+  padding: 0.6rem 0.9rem;
+  border-radius: 16px;
+  background: radial-gradient(circle at top left, #f0ddff 0, #ffffff 65%);
+  border: 1px solid rgba(233, 213, 255, 0.9);
+  box-shadow:
+    0 10px 25px rgba(0, 0, 0, 0.04),
+    0 0 12px rgba(155, 93, 229, 0.2);
+}
+
+/* Label text */
+.stMetric > label {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* Value text */
+.stMetric > div {
+  color: var(--gold);
+  font-weight: 800;
+  font-size: 1.2rem;
+}
+
+/* ---------- Tabs ---------- */
+.stTabs [role="tablist"] {
+  gap: 0.5rem;
+}
+
+.stTabs [role="tab"] {
+  border-radius: 999px !important;
+  padding: 0.4rem 1.2rem !important;
+  background: rgba(233, 213, 255, 0.6);
+  color: var(--muted);
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+
+.stTabs [aria-selected="true"] {
+  background: linear-gradient(135deg, #9b5de5, #ffcf6b) !important;
+  color: #ffffff !important;
+  border-color: rgba(255, 255, 255, 0.9) !important;
+  box-shadow: 0 0 0 3px var(--ring);
+}
+
+/* ---------- Game card hover state ---------- */
+.game-card {
+  transition: transform 0.12s ease-out, box-shadow 0.12s ease-out, border-color 0.12s ease-out;
+}
+
+.game-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(155, 93, 229, 0.9);
+  box-shadow:
+    0 14px 35px rgba(0, 0, 0, 0.08),
+    0 0 18px rgba(155, 93, 229, 0.25);
+}
+
+
+/* ---------- Radio: pick winner ---------- */
+.stRadio > label {
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.stRadio div[role="radiogroup"] > label {
+  padding: 0.18rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid rgba(233, 213, 255, 0.8);
+  margin-right: 0.4rem;
+  background: rgba(255, 255, 255, 0.7);
+  transition: all 0.12s ease-in-out;
+}
+
+/* Selected option */
+.stRadio div[role="radiogroup"] > label[data-checked="true"],
+.stRadio div[role="radiogroup"] > label[aria-checked="true"] {
+  background: linear-gradient(135deg, #9b5de5, #ffcf6b);
+  color: #ffffff;
+  border-color: #ffffff;
+  box-shadow: 0 0 0 3px var(--ring);
+}

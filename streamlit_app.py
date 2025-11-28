@@ -128,13 +128,29 @@ with tab1:
                 unsafe_allow_html=True,
             )
 
+            # --- Controls for THIS game ---
             cols = st.columns([1, 1, 1, 2])
+
+            # Column 0: bet amount slider
             with cols[0]:
-                stake = st.number_input(
+                # Decide a max bet based on wallet (fallback to 100 if unknown or 0)
+                if wallet_balance and wallet_balance > 1:
+                    max_bet = int(wallet_balance)
+                else:
+                    max_bet = 100
+
+                stake = st.slider(
                     f"Bet Amount ($) — #{g.get('id')}",
-                    min_value=1.0, value=5.0, step=1.0,
+                    min_value=1.0,
+                    max_value=float(max_bet),
+                    value=min(10.0, float(max_bet)),  # default bet
+                    step=1.0,
                     key=f"stake_{g.get('id')}",
                 )
+
+                st.markdown(f"**Betting:** ${stake:,.0f}")
+
+            # Column 1: pick winner
             with cols[1]:
                 pick = st.radio(
                     "Pick winner",
@@ -142,6 +158,8 @@ with tab1:
                     index=0,
                     key=f"pick_{g.get('id')}",
                 )
+
+            # Column 2: place bet button
             with cols[2]:
                 if st.button("Place Bet", key=f"place_{g.get('id')}"):
                     payload = {
@@ -155,15 +173,21 @@ with tab1:
                         resp = requests.post(f"{API}/bets/", json=payload, timeout=15)
                         resp.raise_for_status()
                         data = resp.json()
-                        st.success(f"Bet placed. New balance: ${data.get('balance',0):,.2f}")
+                        st.success(
+                            f"Bet placed. New balance: ${data.get('balance',0):,.2f}"
+                        )
                         st.cache_data.clear()
                         st.rerun()
                     except requests.HTTPError as e:
-                        st.error(f"Failed to place bet: {e.response.text if e.response is not None else e}")
+                        st.error(
+                            f"Failed to place bet: {e.response.text if e.response is not None else e}"
+                        )
                     except Exception as ex:
                         st.error(f"Failed to place bet: {ex}")
 
             st.divider()
+
+
 
         # Save schedule CSV
         df = schedule_to_df(schedule)
