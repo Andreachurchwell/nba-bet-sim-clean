@@ -1,11 +1,36 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import Any, Dict, Optional, List
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from ..core.config import APP_TIMEZONE
-from ..services.nba_client import fetch_games_for_date
+from ..services.season_store import SeasonStore
+from ..services.season_reads import get_store, local_read, resolve_season, snapshots
+from datetime import date as calendar_date
+from ..services.live_games import CENTRAL, FeedUnavailable, LiveNBAClient, get_live_client
 
 router = APIRouter(prefix="/games", tags=["games"])
+
+
+@router.get("/live")
+def get_live_games(
+    season: str = Depends(resolve_season),
+    store: SeasonStore = Depends(get_store),
+    client: LiveNBAClient = Depends(get_live_client),
+    date: calendar_date | None = None,
+    days_back: int = Query(0, ge=0, le=7),
+    days_ahead: int = Query(0, ge=0, le=7),
+):
+    local_read(season, lambda: store.metadata(season))
+    if store.is_archived(season):
+        return {"season_id": season, "source": "archive", "verified": False,
+                "games": [], "today": [], "upcoming": [], "recent_finals": [],
+                "message": "Archived seasons use saved snapshots only; no live request was made."}
+    try:
+        return client.read(season, date or datetime.now(CENTRAL).date(), days_back, days_ahead)
+    except FeedUnavailable as exc:
+        return {"season_id": season, "source": "BALLDONTLIE", "verified": False,
+                "stale": False, "games": [], "today": [], "upcoming": [], "recent_finals": [],
+                "timezone": "America/Chicago", "message": str(exc), "retry_after": exc.retry_after}
 
 def today_local() -> str:
     return datetime.now(ZoneInfo(APP_TIMEZONE)).strftime("%Y-%m-%d")
@@ -55,37 +80,12 @@ def simplify(g: Dict[str, Any], tz: str) -> Dict[str, Any]:
     }
 
 @router.get("")
-async def get_games(
-    date: Optional[str] = Query(None, description="YYYY-MM-DD in local time"),
-    team: Optional[str] = Query(None, description="Filter by team abbreviation, e.g., LAL"),
-    status: Optional[str] = Query(None, description="Scheduled | In Progress | Final"),
+def get_games(
+    season: str = Depends(resolve_season),
+    store: SeasonStore = Depends(get_store),
+    date: Optional[str] = Query(None, description="Saved game date, YYYY-MM-DD"),
+    team: Optional[str] = None,
+    status: Optional[str] = None,
+    snapshot: Optional[str] = None,
 ) -> Dict[str, Any]:
-    target = date or today_local()
-    try:
-        raw_games: List[Dict[str, Any]] = await fetch_games_for_date(target)
-        games = [simplify(g, APP_TIMEZONE) for g in raw_games]
-
-        if team:
-            t = team.upper()
-            games = [g for g in games if g["home"] == t or g["away"] == t]
-        if status:
-            s = status.lower()
-            games = [g for g in games if g["status"].lower() == s]
-
-        # Sort by tipoff text (best-effort)
-        def sort_key(g):
-            try:
-                return datetime.strptime(g["tipoff_local"].replace(" (Time TBD)", ""), "%Y-%m-%d %I:%M %p")
-            except Exception:
-                try:
-                    return datetime.strptime(g["tipoff_local"].replace(" (Time TBD)", ""), "%Y-%m-%d")
-                except Exception:
-                    return datetime.max
-        games.sort(key=sort_key)
-
-        return {"date": target, "count": len(games), "games": games}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Fetch failed for {target}: {e}")
-
+    return local_read(season, lambda: snapshots(store, season, "schedules", snapshot, date, team, status))
