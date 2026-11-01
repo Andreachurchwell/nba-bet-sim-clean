@@ -1,63 +1,53 @@
-# --- Python / FastAPI / Streamlit Project Ignore Rules ---
-
-# Virtual environment
-venv/
+# Credentials and local environment
 .env
-
-# Byte-compiled / cache files
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Local data (generated or private)
-data/*.csv
-data/*.json
-*.db
-
-# Streamlit config / cache
+.env.*
+*.env
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
 .streamlit/
-.streamlit/secrets.toml
 
-# VS Code / IDE settings
+# Virtual environments and Python/tool caches
+venv/
+.venv/
+env/
+.env*/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Private runtime records, wallets, metadata, and exports
+/data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Private backups and phase-specific recovery notes
+SheBETS_backups/
+backups/
+backup/
+*.bak
+/docs/phase4-classic.md
+/docs/phase5-classic.md
+/docs/season-storage.md
+
+# Editors, operating systems, logs, and build output
 .vscode/
 .idea/
-
-# System files
 .DS_Store
 Thumbs.db
-
-# Logs
+*.swp
 *.log
-
-# Build / dist
 build/
 dist/
 *.egg-info/
 
-# OS junk
-*.swp
-*.bak
-
-
-# env & secrets
-.env
-*.env
-*.key
-*.pem
-
-# python
-__pycache__/
-*.pyc
-
-# venvs
-venv/
-.env*/  # conda/poetry env folders sometimes
-
-# streamlit local state
-.streamlit/
-
-# local data
-data/*.csv
-data/*.json
-data/*.db
+# Private, installation-specific recovery tools
+/scripts/private_recovery/
+/scripts/backfill_exact_results.py

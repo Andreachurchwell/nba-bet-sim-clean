@@ -1,149 +1,187 @@
 <p align="center">
-  <img src="assets/she_bets_logo.png" alt="SheBETS Logo" width="220" />
+  <img src="assets/she_bets_logo.png" alt="SheBETS logo" width="180" />
 </p>
 
-<h1 align="center">🏀 SheBETS — NBA Betting Simulator (MVP)</h1>
+# SheBETS Classic
 
-<p align="center">
-  Pick winners. Practice analytics. Fake bankroll — real learning.
-</p>
+SheBETS Classic is a local NBA winner-pick simulator with a Streamlit frontend,
+FastAPI backend, and CSV/JSON storage. It uses virtual money only: no deposits,
+payments, or real-money wagering.
 
-<p align="center">
-  Built with <strong>FastAPI</strong> (backend) + <strong>Streamlit</strong> (frontend)
-</p>
+The active season is **2026-27** (BALLDONTLIE season identifier `2026`). The
+**2025-26 archive** has separate storage and is permanently read-only through
+the application. Each season has a **$5,000 starting virtual bankroll**. Startup
+never resets an existing wallet.
 
-## 📋 Overview
-SheBETS is a class project that simulates NBA betting using live game data from the balldontlie API.
-Users can:
-- View today’s games
-- Place fake bets
-- Track their virtual bankroll
-- Settle bets based on real results
-- Export data
-- See their game history and stats
+## Features
 
-This project reinforces full-stack concepts from the JTC AISE program:
-- REST API design with FastAPI
-- Modular architecture (api, services, core)
-- Clean URL routing
-- CSV/JSON persistence (wallet + bet ledger)
-- Streamlit UI design and event-driven programming
-- Using real-world API data
-- Logging, error handling, and request flow
+- Daily NBA games, defaulting to today in America/Chicago, with Previous Day,
+  Today, Next Day, and a date picker. Tipoff times are labeled CST/CDT.
+- Select Game → choose a winner → enter a virtual wager → **Place My Pick**.
+  No extra review screen. Success displays the team, wager, and updated bankroll.
+  Retries reuse an idempotency key to prevent a second debit.
+- Fresh server-side game verification and bankroll validation before accepting
+  new picks. Started games and uncertain eligibility cannot accept picks.
+- Manual **Refresh Results / Settle Eligible Bets** in My Picks. Each request
+  checks up to three distinct pending games; further clicks advance through the queue.
+- Home / Dashboard, NBA Games, My Picks, Performance, and Season Archive, with
+  season-specific statistics, charts, and CSV downloads.
+- Lavender, lilac, and champagne-gold styling with team-abbreviation badges.
+  Official NBA team logos are not currently included.
 
-## ⚙️ Features
-✔ Functional Features
-- Browse today’s and recent NBA games
-- Place bets with a virtual bankroll
-- Settle bets after final scores update
-- Auto-updating wallet on every win/loss
+## Virtual-money rules
 
-CSV exports for:
-- Bet ledger
-- Game results
-- Schedules
-- Local persistence using CSV + JSON
+Picks use fixed even-money returns, not sportsbook odds. The stake is deducted
+on placement. A win credits twice the stake, including the original stake;
+a loss credits nothing. Wagers must be positive cent amounts, at most $5,000
+per pick, and within the available bankroll.
 
-✔ UX & UI Enhancements
-- Clean, custom Streamlit theme
-- Soft pink SheBETS branding
-- Organized tabs (Games, Bets, Wallet, Results)
-- Form-based UI for consistent inputs
+Only verified finals with complete, unequal scores settle wins/losses. Verified
+cancellations refund the stake; postponed or incomplete games remain pending.
+Settled picks are not paid again. There is no automatic background settlement.
 
-✔ Backend Architecture
-- FastAPI with modular structure:
-- api/ → Routers (/games, /bets, /wallet)
-- services/ → External API client (balldontlie)
-- core/ → Config, utils, constants
-- data/ → Local CSV + wallet store
+## NBA data and caching
 
-Separation of:
-- Business logic
-- Data access
-- API transport
+The active feed uses BALLDONTLIE through the backend. Schedule responses are
+cached for five minutes using season-specific buffered calendar-week queries,
+so adjacent dates can reuse requests. The frontend displays only the selected
+Central calendar day and caches schedules separately from financial refreshes.
 
-## 🧩 Project Structure
-```
-shebets/
-│
-├── backend/                   # FastAPI backend
-│   ├── api/
-│   │   ├── routers/
-│   │   │   ├── bets.py
-│   │   │   ├── games.py
-│   │   │   └── wallet.py
-│   │   └── main.py            # FastAPI entrypoint
-│   ├── services/              # Balldontlie API client + helpers
-│   ├── core/                  # Settings, config, utils
-│   └── data/                  # CSV bet ledger + JSON wallet
-│
-├── streamlit/                 # Frontend assets
-│   ├── streamlit_style.css
-│   └── components/ (optional)
-│
-├── streamlit_app.py           # Streamlit UI
-├── requirements.txt
-├── assets/
-│   └── courtcash_logo.svg     # Temporary placeholder logo
-└── README.md
-```
-## 🧠 Tech Stack
-- Layer	Technology
-- Frontend	Streamlit
-- Backend	FastAPI
-- API Data	balldontlie NBA API
-- Persistence	CSV (bets), JSON (wallet)
-- Language	Python 3.12
-UX	Custom streamlit CSS + soft-pink theme
+Provider rate limits trigger a shared backend cooldown honoring `Retry-After`
+when supplied. Older schedules may remain visible with a warning. They never
+authorize a financial action: new picks and settlement require fresh single-game
+verification and fail safely when the provider cannot verify the game.
 
-### 🚀 Running Locally
+Caches/cooldowns are process-local and reset on backend restart. Pagination,
+new picks, and manual settlement still consume quota. Available fields and access
+depend on the API account; missing times and scores are not invented.
 
-1️⃣ Clone the repo
-```
-git clone https://github.com/Andreachurchwell/shebets.git
-cd shebets
-```
-2️⃣ Create & activate venv
-```
+## Local setup
+
+Use Python 3.12. Run these PowerShell commands from the repository root:
+
+```powershell
 python -m venv venv
-venv\Scripts\activate        # Windows
-# OR
-source venv/bin/activate     # Mac/Linux
-```
-3️⃣ Install dependencies
-```
-pip install -r requirements.txt
-```
-4️⃣ Start the FastAPI backend
-```
-cd backend
-uvicorn api.main:app --reload
+.\venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
 ```
 
-(Updated to match your actual working command as of today.)
+On macOS/Linux, activate with `source venv/bin/activate` instead.
+Create a private `.env` in the repository root:
 
-5️⃣ Start the Streamlit frontend (new terminal)
+```dotenv
+NBA_API_KEY=replace_with_your_own_key
+NBA_API_BASE_URL=https://api.balldontlie.io/v1/games
+APP_TIMEZONE=America/Chicago
 ```
-streamlit run streamlit_app.py
+
+Do not commit `.env`. Run the backend from the repository root so environment
+file discovery is consistent:
+
+```powershell
+python -m uvicorn backend.api.main:app --reload --host 127.0.0.1 --port 8000
 ```
-## 🧰 Future Enhancements
-🔧 Technical
-- Move from CSV/JSON → SQLite or PostgreSQL
-- Real user accounts with authentication
-- Background job to auto-settle bets
-- Full service separation (wallet service, bet service, game service)
 
-## 🔮 Features
-- Player props
-- Team logos + standings screen
-- Analytics dashboard (win rate, bet history, trends)
-- Real odds integration (TheOddsAPI or similar)
+In a second terminal, activate the same environment and run:
 
-## 👩‍💻 Author
+```powershell
+python -m streamlit run streamlit_app.py --server.address 127.0.0.1
+```
 
-Andrea Churchwell
-Justice Through Code — AISE 2026 Cohort
-📍 Selmer, Tennessee
-💬 "From dental assistant to applied AI engineer — one project at a time."
+Open `http://127.0.0.1:8501`. Backend health is at
+`http://127.0.0.1:8000/health`; API documentation is at
+`http://127.0.0.1:8000/docs`.
 
-<div align="center"> <sub>© 2025 SheBETS — For learning and fun. Not for real gambling. 🏀</sub> </div>
+### Season storage
+
+Runtime data is private and excluded from Git:
+
+```text
+data/seasons/
+  2025-26/       # Preserved archive and integrity manifest
+  2026-27/       # Active wallet, ledger, metadata, schedules, and results
+```
+
+For an existing installation, preserve or restore these folders from a private
+backup. Do not reinitialize, replace, or delete existing season data. Startup
+neither creates missing seasons nor falls back to legacy shared files.
+
+For a genuinely new installation with no active-season folder, explicitly create
+an empty 2026-27 season:
+
+```powershell
+python scripts/initialize_season_storage.py initialize-new
+```
+
+This creates the $5,000 wallet and refuses to overwrite an existing folder.
+It does not supply the historical archive; without a privately restored archive,
+the archive view reports missing data. The `archive-legacy` action is an explicit
+preservation tool requiring a reviewed checksum baseline, not normal setup.
+See [preservation inputs](docs/preservation.md). Installation-specific recovery
+and legacy backfill tools remain local and are not distributed.
+
+### Environment variables
+
+| Variable | Used by | Purpose |
+| --- | --- | --- |
+| `NBA_API_KEY` | Backend | BALLDONTLIE credential for live verification. |
+| `NBA_API_BASE_URL` | Backend | Games endpoint; defaults to the URL above. |
+| `APP_TIMEZONE` | Backend | Compatibility helpers; defaults to America/Chicago. The current daily feed/UI explicitly use America/Chicago. |
+| `SHEBETS_API_URL` | Frontend | Backend address; defaults to `http://127.0.0.1:8000`. |
+| `SHEBETS_SEASONS_ROOT` | Backend | Optional alternate season-storage root for isolated installations/previews. |
+
+Set `SHEBETS_API_URL` in the frontend terminal and `SHEBETS_SEASONS_ROOT` in the
+backend terminal when needed; Streamlit does not load `.env` itself. Runtime
+betting/settlement kill switches are Python constants in
+`backend/api/core/config.py`, not environment variables. Archive writes are
+blocked independently of those switches.
+
+## Project structure
+
+```text
+backend/api/
+  main.py                # FastAPI application
+  core/config.py         # Provider configuration and runtime switches
+  routers/               # Games, picks/wallet, results, and seasons
+  services/              # Provider client, eligibility, storage, transactions
+streamlit_app.py         # Navigation, daily schedule, and pick workflow
+ui_components.py         # Cards, branding, and abbreviation fallbacks
+dashboard_views.py       # Performance chart data
+assets/                  # Original SheBETS logo and styles
+scripts/                 # Explicit initialization and preservation tools
+tests/                   # Storage, API, provider, and Streamlit regressions
+```
+
+## Tests
+
+```powershell
+python -m unittest discover -s tests -v
+```
+
+Provider calls are mocked; all wallets, ledgers, and archives are generated in
+temporary storage from invented fixtures in `tests/synthetic_fixtures.py`.
+The complete suite runs without `.env`, an API key, private backups, or a `data/`
+directory. It covers financial calculations, idempotency, settlement, season
+isolation, archive integrity, daily navigation, and provider caching/cooldowns.
+Windows may skip the symlink test when the account lacks permission to create symlinks.
+
+## Limitations and future work
+
+- Single-user local app without authentication. Keep both servers bound to
+  loopback; public hosting needs a separate security/deployment review.
+- Only the two configured seasons are supported. Persistent records require
+  private file backups; Git does not protect ignored runtime data.
+- Provider outages, quotas, and incomplete data can block picks or leave results
+  pending. Manual refresh is required.
+- Historical charts attribute eventual payouts to placement dates; original
+  settlement timestamps were unavailable. Archive exceptions are preserved.
+- Follow-up work includes automated CI, dependency review, and team logos only
+  if appropriate reuse permission is established.
+- Accounts, leaderboards, spreads/totals, and an AI analyst remain proposals for
+  a separate SheBETS 2.0 project, not current Classic features.
+
+Keep wallets, ledgers, schedules/results, secrets, and private recovery notes
+out of Git. Some implementation reports describe earlier phases and are retained
+locally rather than serving as current setup instructions.
+
+Created by Andrea Churchwell.

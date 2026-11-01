@@ -1,9 +1,10 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from typing import Dict, Any, List
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from ..core.config import APP_TIMEZONE
-from ..services.nba_client import fetch_games_for_dates
+from ..services.season_store import SeasonStore
+from ..services.season_reads import get_store, local_read, resolve_season, snapshots
 
 router = APIRouter(prefix="/results", tags=["results"])
 
@@ -33,13 +34,17 @@ def simplify_game(g: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 @router.get("")
-async def get_results(days: int = Query(7, ge=1, le=30)) -> Dict[str, Any]:
-    try:
-        dates = iso_days_ago(days)
-        raw = await fetch_games_for_dates(dates)   # now returns list[dict]
-        finals = [simplify_game(g) for g in raw if (g.get("status") or "").lower() == "final"]
-        finals.sort(key=lambda g: g["date"], reverse=True)
-        return {"range_days": days, "count": len(finals), "games": finals}
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Failed to fetch results: {e}")
-
+def get_results(
+    season: str = Depends(resolve_season),
+    store: SeasonStore = Depends(get_store),
+    snapshot: str | None = None,
+    date: str | None = None,
+    days: int = Query(7, ge=1, le=30),
+) -> Dict[str, Any]:
+    # Keep the old days argument compatible, but do not apply today's rolling
+    # window to historical snapshots. The UI chooses saved files explicitly.
+    return local_read(season, lambda: {
+        **snapshots(store, season, "results", snapshot, date),
+        "range_days": None,
+        "window_note": "Local snapshots only; the legacy days parameter does not filter saved files.",
+    })

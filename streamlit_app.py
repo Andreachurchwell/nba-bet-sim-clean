@@ -1,274 +1,367 @@
+"""SheBETS Classic: virtual NBA picks."""
 import os
+from datetime import datetime, timezone, timedelta
+from uuid import uuid4
 from pathlib import Path
-from datetime import date
+from zoneinfo import ZoneInfo
 
 import pandas as pd
+import plotly.express as px
 import requests
 import streamlit as st
 
-API = "http://127.0.0.1:8000"
+from dashboard_views import performance_frames
+from ui_components import brand_header, story_card, matchup_grid, matchup_card, pending_pick_card, empty_card
+from backend.api.services.game_eligibility import pick_reason
 
-# ---------- PAGE + THEME ----------
-st.set_page_config(page_title="SheBETS — NBA Bet Sim (MVP)", page_icon="🏀", layout="wide")
+ROOT = Path(__file__).resolve().parent
+API = os.getenv("SHEBETS_API_URL", "http://127.0.0.1:8000")
+st.set_page_config(page_title="SheBETS Classic", page_icon="\U0001F3C0", layout="wide")
+st.markdown("<style>" + (ROOT / "assets/classic_style.css").read_text(encoding="utf-8") + "</style>", unsafe_allow_html=True)
+st.markdown(brand_header(), unsafe_allow_html=True)
 
-# CSS (dark theme polish)
-css_path = Path("assets/streamlit_style.css")
-if css_path.exists():
-    st.markdown(f"<style>{css_path.read_text()}</style>", unsafe_allow_html=True)
-
-# ---------- HEADER ----------
-logo_path = Path("assets/she_bets_logo.png")  # update to your new logo name
-with st.container():
-    left, right = st.columns([1, 5], vertical_alignment="center")
-    with left:
-        if logo_path.exists():
-            st.image(str(logo_path), use_container_width=True)
-        else:
-            st.markdown(
-                "<h2 style='margin:0; color:#ff4fa3;'>💖 SheBETS</h2>",
-                unsafe_allow_html=True,
-            )
-    with right:
-        st.markdown(
-            """
-            <div class="headline">
-              <h1>SheBETS — NBA Betting Simulator</h1>
-              <p class="tagline">
-                A playful practice arena for building your betting brain — no real money, all real data.
-              </p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-# ensure local data folder exists for CSV saves
-os.makedirs("data", exist_ok=True)
-
-# ---------- HELPERS ----------
 @st.cache_data(ttl=60)
-def fetch_json(url: str, params: dict | None = None) -> dict:
-    r = requests.get(url, params=params or {}, timeout=30)
-    r.raise_for_status()
-    return r.json()
+def fetch_seasons() -> dict:
+    response = requests.get(f"{API}/seasons", timeout=30)
+    response.raise_for_status()
+    return response.json()
 
-def schedule_to_df(payload: dict) -> pd.DataFrame:
-    rows = []
-    for g in payload.get("games", []):
-        rows.append({
-            "date": payload.get("date"),
-            "tipoff_local": g.get("tipoff_local"),
-            "matchup": g.get("matchup"),
-            "teams": g.get("teams"),
-            "home": g.get("home"),
-            "away": g.get("away"),
-            "home_score": g.get("home_score"),
-            "away_score": g.get("away_score"),
-            "status": g.get("status"),
-        })
-    return pd.DataFrame(rows)
 
-def results_to_df(payload: dict) -> pd.DataFrame:
-    rows = []
-    for g in payload.get("games", []):
-        rows.append({
-            "date": g.get("date"),
-            "matchup": f"{g.get('away')} @ {g.get('home')}",
-            "away": g.get("away"),
-            "home": g.get("home"),
-            "away_score": g.get("away_score"),
-            "home_score": g.get("home_score"),
-            "winner": g.get("winner"),
-            "status": g.get("status"),
-        })
-    return pd.DataFrame(rows)
-
-# ---------- UI ----------
-tab1, tab2 = st.tabs(["Today's Schedule", "Recent Results"])
-
-# ========== TAB 1: TODAY / PLACE BETS ==========
-with tab1:
-    st.subheader("Today's Schedule")
-    picked = st.date_input("Date", value=date.today())
-    team = st.text_input("Filter by team (abbr, e.g., LAL)", "")
-    status = st.selectbox("Status", ["All", "Scheduled", "In Progress", "Final"])
-
-    params = {"date": str(picked)}
-    if team.strip():
-        params["team"] = team.strip().upper()
-    if status != "All":
-        params["status"] = status
-
-    try:
-        schedule = fetch_json(f"{API}/games", params=params)
-
-        # Wallet metric
-        wallet_balance = None
+def read_json(path: str, season: str, snapshot: str | None = None, anchor: str | None = None) -> dict:
+    # Both season and snapshot are explicit cache arguments, never hidden state.
+    params = {"season": season}
+    if snapshot:
+        params["snapshot"] = snapshot
+    if anchor:
+        params["date"] = anchor
+    response = requests.get(f"{API}{path}", params=params, timeout=30)
+    if response.status_code >= 400:
         try:
-            wallet = fetch_json(f"{API}/bets/wallet")
-            wallet_balance = float(wallet.get("balance", 0))
-        except Exception:
-            pass
+            detail = response.json().get("detail", "Local season data is unavailable")
+            message = detail.get("message", str(detail)) if isinstance(detail, dict) else str(detail)
+        except ValueError:
+            message = "Backend could not read local season data"
+        raise ValueError(message)
+    response.raise_for_status()
+    payload = response.json()
+    if payload.get("season_id") != season:
+        raise ValueError("Backend returned a different season; refusing to display mixed data")
+    return payload
 
-        mcol1, mcol2 = st.columns([1, 5])
-        with mcol1:
-            st.metric("Wallet", f"${(wallet_balance or 0):,.2f}")
-        with mcol2:
-            st.caption(f"{schedule.get('count', 0)} games")
 
-        # Games + controls
-        for g in schedule.get("games", []):
-            st.markdown(
-                f"""
-                <div class="game-card">
-                  <div class="game-top"><b>{g.get('matchup','?')}</b><span class="status">{g.get('status','')}</span></div>
-                  <div class="game-sub">{g.get('teams','')}</div>
-                  <div class="time">🕒 {g.get('tipoff_local','')}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+@st.cache_data(ttl=15)
+def fetch_json(path: str, season: str, snapshot: str | None = None, anchor: str | None = None) -> dict:
+    return read_json(path, season, snapshot, anchor)
 
-            cols = st.columns([1, 1, 1, 2])
-            with cols[0]:
-                stake = st.number_input(
-                    f"Bet Amount ($) — #{g.get('id')}",
-                    min_value=1.0, value=5.0, step=1.0,
-                    key=f"stake_{g.get('id')}",
-                )
-            with cols[1]:
-                pick = st.radio(
-                    "Pick winner",
-                    options=[g.get("home"), g.get("away")],
-                    index=0,
-                    key=f"pick_{g.get('id')}",
-                )
-            with cols[2]:
-                if st.button("Place Bet", key=f"place_{g.get('id')}"):
-                    payload = {
-                        "date": schedule.get("date"),
-                        "game_id": g.get("id"),
-                        "matchup": g.get("matchup"),
-                        "pick": pick,
-                        "stake": float(stake),
-                    }
-                    try:
-                        resp = requests.post(f"{API}/bets/", json=payload, timeout=15)
-                        resp.raise_for_status()
-                        data = resp.json()
-                        st.success(f"Bet placed. New balance: ${data.get('balance',0):,.2f}")
-                        st.cache_data.clear()
-                        st.rerun()
-                    except requests.HTTPError as e:
-                        st.error(f"Failed to place bet: {e.response.text if e.response is not None else e}")
-                    except Exception as ex:
-                        st.error(f"Failed to place bet: {ex}")
 
-            st.divider()
+@st.cache_data(ttl=300)
+def fetch_schedule(season: str, anchor: str) -> dict:
+    # Financial refreshes must not evict the provider-backed browsing cache.
+    return read_json("/games/live", season, anchor=anchor)
 
-        # Save schedule CSV
-        df = schedule_to_df(schedule)
-        if not df.empty and st.button("💾 Save schedule to CSV"):
-            fname = f"data/schedule_{str(picked)}.csv"
-            df.to_csv(fname, index=False)
-            st.success(f"Saved {len(df)} rows to **{fname}**")
 
-        # Bets + settle
-        st.subheader("My Bets")
-        try:
-            bets = fetch_json(f"{API}/bets/")
-            st.dataframe(pd.DataFrame(bets.get("bets", [])), use_container_width=True, height=280)
-        except Exception:
-            st.info("No bets yet.")
+def can_pick(game, enabled):
+    candidate = {**game, "status_state": game.get("eligibility_state", game.get("status_state")),
+                 "verified_at": game.get("eligibility_verified_at")}
+    return bool(enabled and game.get("pick_eligible") is True and not pick_reason(candidate, max_age_seconds=300))
 
-        col1, col2 = st.columns([1, 3])
-        with col1:
-            if st.button("Settle open bets (last 3 days)"):
-                try:
-                    resp = requests.post(f"{API}/bets/settle?days=3", timeout=20)
-                    resp.raise_for_status()
-                    msg = resp.json()
-                    st.success(
-                        f"Settled {msg.get('settled',0)} bet(s). "
-                        f"New balance: ${msg.get('new_balance',0):,.2f}"
-                    )
-                    st.cache_data.clear()
+
+def explained_game(game, enabled):
+    if can_pick(game, enabled):
+        return game
+    candidate = {**game, "status_state": game.get("eligibility_state", game.get("status_state")),
+                 "verified_at": game.get("eligibility_verified_at")}
+    reason = game.get("pick_reason") or pick_reason(candidate, max_age_seconds=300)
+    return {**game, "pick_reason": reason or ("Picks paused â€” betting unavailable" if not enabled else "Backend game verification required")}
+
+
+def cards(games, title, message, enabled=False, season=None, group="games"):
+    st.subheader(title)
+    if not games:
+        st.markdown(empty_card("No games scheduled", message), unsafe_allow_html=True)
+        return
+    if not enabled:
+        st.markdown(matchup_grid([explained_game(game, False) for game in games]), unsafe_allow_html=True)
+        return
+    for start in range(0, len(games), 3):
+        for col, game in zip(st.columns(3), games[start:start + 3]):
+            with col:
+                eligible = can_pick(game, enabled)
+                st.markdown(matchup_card(explained_game(game, enabled), eligible), unsafe_allow_html=True)
+                if eligible and st.button("Select Game", key=f"pick_{group}_{season}_{game['id']}", type="primary", width="stretch"):
+                    st.session_state["pick_draft"] = {"season": season, "game": game, "intent": str(uuid4())}
+                    st.session_state.pop("pick_review", None)
                     st.rerun()
-                except Exception as e:
-                    st.error(f"Settle failed: {e}")
 
-    except requests.RequestException as e:
-        st.error(f"Backend error: {e}")
 
-# ========== TAB 2: RECENT RESULTS (robust + debug) ==========
-with tab2:
-    st.subheader("Final Scores (last N days)")
-
-    colA, colB, colC = st.columns([3, 1, 1])
-    with colA:
-        days = st.slider("Days back", min_value=1, max_value=30, value=3)
-    with colB:
-        force = st.button("↻ Force refresh")
-        if force:
-            st.cache_data.clear()
-    with colC:
-        debug = st.toggle("Debug")
-
+def post_action(path, season, payload=None, query=None):
     try:
-        # optional cache-buster so we KNOW we're not seeing a stale response
-        params = {"days": int(days)}
-        if force:
-            import time
-            params["_"] = int(time.time())
+        response = requests.post(f"{API}{path}", params={**(query or {}), "season": season}, json=payload, timeout=45)
+    except requests.RequestException:
+        raise ValueError("The result could not be confirmed. Retry this same pick; do not start another until the result is known.") from None
+    if response.status_code >= 400:
+        try:
+            detail = response.json().get("detail", "The action could not be accepted.")
+            if isinstance(detail, list):
+                message = "Check your team and virtual amount (two decimal places, up to $5,000)."
+            else:
+                message = detail.get("message", str(detail)) if isinstance(detail, dict) else str(detail)
+        except ValueError:
+            message = "The backend could not confirm this action. Retry the same pick."
+        raise ValueError(message)
+    result = response.json()
+    if result.get("season_id") != season:
+        raise ValueError("The response season was unexpected. Refresh your history before retrying.")
+    return result
 
-        # do the request (uses cached fetch_json unless force added)
-        results = fetch_json(f"{API}/results", params=params)
 
-        if debug:
-            st.code(
-                f"GET {API}/results?days={days}\n\n"
-                f"Response preview:\n{str(results)[:1200]}..."
-            )
+def pick_panel(season, balance):
+    draft = st.session_state.get("pick_draft")
+    if not draft or draft["season"] != season:
+        return
+    game, intent = draft["game"], draft["intent"]
+    with st.container(border=True):
+        st.subheader("Your Pick")
+        st.markdown(matchup_card(game), unsafe_allow_html=True)
+        st.caption(f"Bankroll: ${balance:,.2f}. Game eligibility and funds are checked when you place your pick.")
+        pick = st.radio("Pick a winner", [game["away"], game["home"]],
+                        index=[game["away"], game["home"]].index(draft.get("pick", game["away"])),
+                        format_func=lambda team: game["away_name"] if team == game["away"] else game["home_name"],
+                        key=f"winner_{intent}")
+        stake = st.number_input("Virtual wager ($)", min_value=0.01, max_value=5000.0,
+                                value=draft.get("stake", min(50.0, max(0.01, balance))), step=1.0, format="%.2f", key=f"wager_{intent}")
+        # These are non-widget draft fields: Streamlit removes hidden widgets
+        # when another section renders, but the chosen team/wager must survive.
+        draft.update(pick=pick, stake=stake)
+        first, second = st.columns(2)
+        first.metric("Potential profit", f"${stake:,.2f}")
+        second.metric("Potential total return", f"${stake * 2:,.2f}")
+        st.caption("Virtual money only. A win returns twice your wager, including the stake. A loss returns $0.")
+        # One stable key per opened pick, including edits, reruns and retries.
+        # Never generate a new key merely because a response was lost.
+        legacy = st.session_state.pop("pick_review", None)
+        legacy_key = legacy["key"] if legacy and legacy.get("fingerprint", [None])[0] == intent else intent
+        request_key = draft.setdefault("idempotency_key", legacy_key)
+        if st.button("Place My Pick", key=f"place_{intent}", type="primary"):
+            try:
+                result = post_action("/bets/", season, {"season_id": season, "game_id": game["id"],
+                    "pick": pick, "stake": f"{stake:.2f}", "idempotency_key": request_key})
+                team = game["home_name"] if pick == game["home"] else game["away_name"]
+                action = "already recorded" if result.get("repeated") else "placed"
+                st.session_state["pick_success"] = f"{team}: ${stake:,.2f} virtual wager {action}. Bankroll: ${result['balance']:,.2f}."
+                st.session_state.pop("pick_draft", None)
+                fetch_json.clear(); st.rerun()
+            except ValueError as exc:
+                st.error(str(exc))
+        if st.button("Cancel", key=f"close_{intent}"):
+            st.session_state.pop("pick_draft", None)
+            st.rerun()
 
-        count = results.get("count", 0)
-        games = results.get("games", [])
 
-        st.caption(f"{count} final games returned")
-        if not games:
-            st.info(
-                "No final games found in this window. Try 2–3 days. "
-                "The public API sometimes lags posting finals."
-            )
+def show_snapshots(path: str, season: str, title: str):
+    st.subheader(title)
+    try:
+        payload = fetch_json(path, season)
+        files = payload.get("snapshots", [])
+        if not files:
+            st.markdown(empty_card("No saved snapshot", payload["message"]), unsafe_allow_html=True)
+            return
+        selected = st.selectbox("Saved snapshot", files, key=f"snapshot_{path}_{season}")
+        payload = fetch_json(path, season, selected)
+        st.caption(f"Historical snapshot: {selected}. Original time labels and incomplete fields are preserved.")
+        if payload["games"]:
+            st.markdown(matchup_grid([{**game, "pick_reason": "Season archive â€” permanently read-only"} for game in payload["games"]]), unsafe_allow_html=True)
+            st.download_button("Download selected snapshot", pd.DataFrame(payload["games"]).to_csv(index=False),
+                               file_name=f"{season}_{selected}", mime="text/csv", key=f"download_{path}_{season}")
         else:
-            rows = []
-            for g in games:
-                rows.append({
-                    "date": (g.get("date") or "")[:10],
-                    "matchup": f"{g.get('away','?')} @ {g.get('home','?')}",
-                    "score": f"{g.get('away_score','?')}–{g.get('home_score','?')}",
-                    "winner": g.get("winner"),
-                })
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, height=360)
+            st.info(payload["message"])
+    except (requests.RequestException, ValueError, KeyError) as exc:
+        st.warning(f"Saved snapshot unavailable: {exc}")
 
-            if st.button("💾 Save results to CSV"):
-                df_r = results_to_df(results)
-                fname = f"data/results_last_{days}d.csv"
-                df_r.to_csv(fname, index=False)
-                st.success(f"Saved {len(df_r)} rows to **{fname}**")
 
-    except requests.HTTPError as e:
-        st.error(f"HTTP error from backend: {e}\nURL: {API}/results?days={days}")
-        if debug and getattr(e, "response", None) is not None:
-            st.code(e.response.text)
-    except Exception as e:
-        # show full stack in debug to catch any hidden issues
-        if debug:
-            st.exception(e)
+def show_live_games(season, enabled=False, balance=0):
+    st.subheader("NBA Games")
+    st.caption("All live game times: America/Chicago (CST/CDT). Team badges are abbreviation fallbacks, not official logos.")
+    day_key = f"game_day_{season}"
+    saved_day_key = f"selected_game_day_{season}"
+    today = datetime.now(ZoneInfo("America/Chicago")).date()
+    if day_key not in st.session_state:
+        st.session_state[day_key] = st.session_state.get(saved_day_key, today)
+    def navigate(offset=None):
+        st.session_state[day_key] = (datetime.now(ZoneInfo("America/Chicago")).date() if offset is None
+                                     else st.session_state[day_key] + timedelta(days=offset))
+        st.session_state[saved_day_key] = st.session_state[day_key]
+        st.session_state.pop("pick_draft", None)
+        st.session_state.pop("pick_review", None)
+    previous, current, following = st.columns(3)
+    previous.button("Previous Day", on_click=navigate, args=(-1,), key=f"previous_{season}", width="stretch")
+    current.button("Today", on_click=navigate, key=f"today_{season}", width="stretch", type="primary")
+    following.button("Next Day", on_click=navigate, args=(1,), key=f"next_{season}", width="stretch")
+    anchor = st.date_input("Game day", key=day_key)
+    st.session_state[saved_day_key] = anchor
+    st.markdown(f'<div class="selected-game-date">{anchor:%A, %B %d, %Y}<span>America/Chicago</span></div>', unsafe_allow_html=True)
+    draft = st.session_state.get("pick_draft")
+    if draft and draft["game"].get("date") != anchor.isoformat():
+        st.session_state.pop("pick_draft", None)
+        st.session_state.pop("pick_review", None)
+    if enabled:
+        pick_panel(season, balance)
+    try:
+        feed = fetch_schedule(season, anchor.isoformat())
+        if not feed.get("verified"):
+            st.warning(feed.get("message", "Live games could not be verified."))
+            st.markdown(empty_card("Games unavailable", "Try again shortly. Your bankroll and pick history are unaffected."), unsafe_allow_html=True)
+            return
+        if feed.get("stale"):
+            st.warning("Showing an older verified response. " + (feed.get("warning") or "The provider could not refresh."))
+        fetched = feed.get("fetched_at_utc")
+        if fetched:
+            try:
+                updated = datetime.fromisoformat(fetched).astimezone(ZoneInfo("America/Chicago")).strftime("%b %d, %I:%M %p %Z")
+            except ValueError:
+                updated = "time unavailable"
+            st.caption(f"Source: BALLDONTLIE | Last successful fetch: {updated} | Schedules cached up to 5 minutes; placement always checks fresh status.")
+        # Defense against a malformed/wrong-day response: never leak another
+        # date's cards into the selected day, even if the provider window grows.
+        daily = [game for game in feed.get("today", []) if game.get("date") == anchor.isoformat()]
+        cards(daily, "Today's Games" if anchor == today else f"Games on {anchor:%b %d}",
+              "No NBA games are scheduled for this selected date. Try Previous Day, Today, or Next Day.",
+              enabled and not feed.get("stale"), season, "daily")
+    except (requests.RequestException, ValueError, KeyError) as exc:
+        st.warning(f"Live games unavailable: {exc}. Your season dashboard is unaffected.")
+
+
+def show_performance(bets, stats, season):
+    st.subheader("Performance")
+    if not bets:
+        st.markdown(empty_card("No performance data", "Charts will appear after your first pick."), unsafe_allow_html=True)
+        return
+    perf, daily = performance_frames(bets, stats["starting_bankroll"])
+    st.caption("Reconstructed bankroll by bet-placement date. Eventual payouts are attributed to placement dates; exact historical settlement times were not recorded.")
+    line = px.line(perf.dropna(subset=["placed_at"]), x="placed_at", y="bankroll")
+    line.update_traces(line=dict(width=3, color="#9A57D6"), fill="tozeroy", fillcolor="rgba(217,184,240,0.16)",
+                       hovertemplate="%{x|%b %d, %Y}<br>Bankroll: $%{y:,.2f}<extra></extra>")
+    bar = px.bar(daily, x="day", y="cash_flow", color="result",
+                 color_discrete_map={"Inflow": "#F3C96B", "Outflow": "#9A57D6"})
+    bar.update_traces(hovertemplate="%{x|%b %d, %Y}<br>Cash flow: $%{y:,.2f}<extra></extra>")
+    for figure, title, axis, key in (
+        (line, f"{season} Reconstructed Bankroll by Bet Date", "Bankroll ($)", "bankroll"),
+        (bar, f"{season} Daily Cash Flow by Bet Date", "Cash flow ($)", "cash_flow"),
+    ):
+        figure.update_layout(template="plotly_white", title=dict(text=title, font=dict(size=17, color="#45235F")),
+                             paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                             font=dict(family="Segoe UI, Arial", color="#715D7D", size=11),
+                             xaxis_title=None, yaxis_title=axis, height=340,
+                             margin=dict(l=15, r=15, t=55, b=20), legend=dict(orientation="h", title=None))
+        figure.update_xaxes(showgrid=False)
+        figure.update_yaxes(gridcolor="#EEE0F2", zerolinecolor="#D9B8F0")
+        st.plotly_chart(figure, width="stretch", key=f"{key}_{season}")
+
+
+try:
+    registry = fetch_seasons()
+    choices = [item["season_id"] for item in registry["seasons"]]
+    labels = {item["season_id"]: item["label"] for item in registry["seasons"]}
+    context, control = st.columns([3, 2], vertical_alignment="center")
+    with control:
+        season = st.selectbox("NBA season", choices, index=choices.index(registry["default_season"]),
+                              format_func=lambda value: labels[value], key="selected_season")
+    archived = next(item["archived"] for item in registry["seasons"] if item["season_id"] == season)
+    betting_enabled = registry.get("betting_enabled", False) and not archived
+    settlement_enabled = registry.get("settlement_enabled", False) and not archived
+    if st.session_state.get("pick_draft", {}).get("season") not in (None, season):
+        st.session_state.pop("pick_draft", None); st.session_state.pop("pick_review", None)
+    with context:
+        st.markdown(f'<div class="season-context"><strong>{season}</strong> &nbsp; / &nbsp; {"Season Archive" if archived else "Current NBA Season"}</div>', unsafe_allow_html=True)
+        st.markdown('<div class="maintenance-note">&#9675; ' + ("Archive &nbsp; Read-only" if archived else ("Classic picks &nbsp; Virtual money only" if betting_enabled else "Read-only &nbsp; Betting &amp; settlement paused")) + '</div>', unsafe_allow_html=True)
+    if st.session_state.get("pick_success"):
+        st.success(st.session_state.pop("pick_success"))
+    if st.button("Refresh view", help="Refreshes displayed reads. Schedules may remain cached for five minutes; pick placement always verifies fresh status."):
+        fetch_json.clear()
+        fetch_seasons.clear()
+        fetch_schedule.clear()
+        st.rerun()
+
+    stats = fetch_json("/seasons/stats", season)
+    bets = fetch_json("/bets/", season)["bets"]
+    wallet = fetch_json("/bets/wallet", season)
+    if wallet["balance"] != stats["available_bankroll"]:
+        st.error("Season wallet changed between reads. Refresh before viewing this dashboard.")
+        st.stop()
+
+    # st.tabs has no keyed server-side selection in the installed Streamlit.
+    # Every betting widget reruns the script, so navigation must be a widget
+    # backed by session state rather than a recreated, Home-first tab group.
+    with st.container(key="section_navigation"):
+        section = st.radio("Navigation",
+            ["Home / Dashboard", "NBA Games", "My Picks", "Performance", "Season Archive"],
+            key="active_section", horizontal=True, label_visibility="collapsed")
+    if section == "Home / Dashboard":
+        st.markdown(story_card(season, archived), unsafe_allow_html=True)
+        st.markdown('<div class="section-kicker">SEASON SUMMARY</div>', unsafe_allow_html=True)
+        st.subheader("Dashboard")
+        metrics = [
+            ("Bankroll", f"${wallet['balance']:,.2f}"),
+            ("Starting bankroll", f"${stats['starting_bankroll']:,.2f}"),
+            ("Profit/loss (settled bets)", f"${stats['profit_loss']:,.2f}"),
+            ("Total bets", stats["total_bets"]), ("Wins", stats["wins"]), ("Losses", stats["losses"]),
+            ("Win percentage", "\u2014" if stats["win_percentage"] is None else f"{stats['win_percentage']:.1f}%"),
+            ("ROI", "\u2014" if stats["roi"] is None else f"{stats['roi']:.1f}%"),
+            ("Pending bets", stats["pending_bets"]), ("Pending stakes", f"${stats['pending_stakes']:,.2f}"),
+        ]
+        for start in (0, 4, 8):
+            cols = st.columns(4 if start < 8 else 2)
+            for col, (label, value) in zip(cols, metrics[start:start + (4 if start < 8 else 2)]):
+                col.metric(label, value)
+        if archived:
+            st.warning(f"{stats['pending_bets']} archived pick(s) remain unresolved, with ${stats['pending_stakes']:,.2f} in pending stakes. Original records and the recorded wallet balance are preserved read-only.")
         else:
-            st.error(f"Unexpected error in Results tab: {e}")
-
-
-
-
-
-
-
+            st.caption("Select a game in NBA Games to place a virtual pick." if betting_enabled else "Betting is currently paused.")
+    elif section == "NBA Games":
+        if archived:
+            st.info("Archive view: original saved schedules only. No live requests or new results are substituted.")
+            show_snapshots("/games", season, "Archived schedules")
+        else:
+            show_live_games(season, betting_enabled, wallet["balance"])
+    elif section == "My Picks":
+        st.subheader("My Picks")
+        if not bets:
+            st.markdown(empty_card("No picks yet", "No picks recorded for this season. Choose an eligible matchup in NBA Games to begin." if betting_enabled else "No picks recorded. Your virtual bankroll is untouched; betting remains paused."), unsafe_allow_html=True)
+        else:
+            st.caption(f"{len(bets):,} original records, including the preserved duplicate." if archived else f"{len(bets):,} picks this season.")
+            if not archived:
+                pending = [row for row in bets if row["status"] == "open"]
+                settled = [row for row in bets if row["status"] != "open"]
+                st.subheader("Pending Picks")
+                if pending:
+                    st.markdown('<div class="matchup-grid">' + ''.join(pending_pick_card(row) for row in pending) + '</div>', unsafe_allow_html=True)
+                else:
+                    st.caption("No pending picks.")
+                st.subheader("Settled Picks")
+                if settled:
+                    st.markdown('<div class="matchup-grid">' + ''.join(pending_pick_card(row) for row in settled) + '</div>', unsafe_allow_html=True)
+                else:
+                    st.caption("Settled picks will appear here after verified results.")
+                if settlement_enabled and pending and st.button("Refresh Results / Settle Eligible Bets", type="primary"):
+                    try:
+                        result = post_action("/bets/settle", season, query={"after_game_id": st.session_state.get(f"settle_cursor_{season}", 0)})
+                        st.session_state[f"settle_cursor_{season}"] = result["next_after_game_id"]
+                        st.session_state["pick_success"] = f"Checked {result['checked_games']} games; settled {result['settled']} picks. {result['pending']} remain pending. " + " ".join(result.get("warnings", []))
+                        fetch_json.clear(); st.rerun()
+                    except ValueError as exc:
+                        st.error(str(exc))
+            st.dataframe(pd.DataFrame(bets), width="stretch", height=360)
+            st.download_button("Download season bet history", pd.DataFrame(bets).to_csv(index=False),
+                               file_name=f"bets_{season}.csv", mime="text/csv", key=f"bets_download_{season}")
+    elif section == "Performance":
+        show_performance(bets, stats, season)
+    elif section == "Season Archive":
+        if archived:
+            st.subheader("Season Archive")
+            st.caption("The 2025-26 ledger, wallet and saved snapshots are preserved read-only.")
+            show_snapshots("/results", season, "Saved results, just as recorded")
+        else:
+            st.markdown(empty_card("Season Archive", "Choose 2025-26 in the season selector above to revisit your original picks, recorded balance, performance and saved results."), unsafe_allow_html=True)
+    st.markdown('<footer class="app-footer"><span>SheBETS Classic</span><span>Virtual money only. No real-money wagering.</span></footer>', unsafe_allow_html=True)
+except (requests.RequestException, ValueError, KeyError) as exc:
+    st.error(f"Unable to read selected-season data: {exc}. No legacy fallback was used.")
