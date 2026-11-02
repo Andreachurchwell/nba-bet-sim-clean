@@ -37,8 +37,11 @@ a $50 winning pick returns $100 total: your $50 stake plus $50 profit. A loss
 returns nothing. Wagers must fit your available bankroll, with a $5,000 per-pick
 limit. Postponed games stay pending; verified cancellations return the stake.
 
-The interface uses my original SheBETS logo, lavender and gold styling, and team
-abbreviation badges. Official NBA team logos aren't included.
+The interface uses my original SheBETS logo and lavender and gold styling.
+My local installation can display collected NBA team images, with abbreviation
+badges when an image is missing. These optional images aren't distributed with
+the repository because their redistribution rights haven't been verified.
+See [local logo notes](docs/local-team-logos.md).
 
 ## Screenshots
 
@@ -172,8 +175,8 @@ the project's local data and secrets, but those files still need private backups
 
 ## What's Next
 
-I'd like to add GitHub CI checks and official team logos if I can verify the
-right permissions. For now, Classic stays focused on NBA winner picks and
+I'd like to add GitHub CI checks and verify permissions before distributing
+team artwork. For now, Classic stays focused on NBA winner picks and
 tracking a season's performance.
 
 I'm also considering a separate **SheBETS 2.0** with accounts, leaderboards,

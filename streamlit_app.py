@@ -13,12 +13,50 @@ import streamlit as st
 from dashboard_views import performance_frames
 from ui_components import brand_header, story_card, matchup_grid, matchup_card, pending_pick_card, empty_card
 from backend.api.services.game_eligibility import pick_reason
+from wager_controls import whole_dollars, maximum_dollars, initial_wager
 
 ROOT = Path(__file__).resolve().parent
 API = os.getenv("SHEBETS_API_URL", "http://127.0.0.1:8000")
 st.set_page_config(page_title="SheBETS Classic", page_icon="\U0001F3C0", layout="wide")
 st.markdown("<style>" + (ROOT / "assets/classic_style.css").read_text(encoding="utf-8") + "</style>", unsafe_allow_html=True)
 st.markdown(brand_header(), unsafe_allow_html=True)
+
+
+def remember_widget(widget_key, saved_key):
+    st.session_state[saved_key] = st.session_state[widget_key]
+
+
+def remember_team(intent):
+    draft = st.session_state.get("pick_draft")
+    if draft and draft["intent"] == intent:
+        draft["pick"] = st.session_state[f"winner_{intent}"]
+
+
+def synchronize_wager(intent, source_key, other_key, limit):
+    draft = st.session_state.get("pick_draft")
+    if not draft or draft["intent"] != intent:
+        return
+    if draft.get("wager_ui_version") != 2:
+        # An already-open decimal widget may fire its old callback during an
+        # upgrade. Restore the durable draft first, before reading that payload.
+        dollars = initial_wager(draft, limit)
+        draft.pop("stake_cents", None)
+        draft.pop("wager_error", None)
+        draft.update(stake=dollars, stake_dollars=dollars, wager_ui_version=2)
+        st.session_state[source_key] = st.session_state[other_key] = dollars
+        return
+    try:
+        dollars = whole_dollars(st.session_state[source_key])
+        if not 1 <= dollars <= limit:
+            raise ValueError("Choose a wager within your available bankroll and the $5,000 limit.")
+    except ValueError as exc:
+        draft["wager_error"] = str(exc)
+        return
+    draft.update(stake=dollars, stake_dollars=dollars)
+    draft.pop("wager_error", None)
+    # Callbacks run before rendering; the two controls have different keys.
+    st.session_state[source_key] = dollars
+    st.session_state[other_key] = dollars
 
 @st.cache_data(ttl=60)
 def fetch_seasons() -> dict:
@@ -75,23 +113,22 @@ def explained_game(game, enabled):
     return {**game, "pick_reason": reason or ("Picks paused â€” betting unavailable" if not enabled else "Backend game verification required")}
 
 
-def cards(games, title, message, enabled=False, season=None, group="games"):
+def cards(games, title, message, enabled=False, season=None, group="games", saved_picks=()):
     st.subheader(title)
     if not games:
         st.markdown(empty_card("No games scheduled", message), unsafe_allow_html=True)
         return
     if not enabled:
-        st.markdown(matchup_grid([explained_game(game, False) for game in games]), unsafe_allow_html=True)
+        st.markdown(matchup_grid([explained_game(game, False) for game in games], saved_picks), unsafe_allow_html=True)
         return
     for start in range(0, len(games), 3):
         for col, game in zip(st.columns(3), games[start:start + 3]):
             with col:
                 eligible = can_pick(game, enabled)
-                st.markdown(matchup_card(explained_game(game, enabled), eligible), unsafe_allow_html=True)
+                st.markdown(matchup_card(explained_game(game, enabled), eligible, saved_picks), unsafe_allow_html=True)
                 if eligible and st.button("Select Game", key=f"pick_{group}_{season}_{game['id']}", type="primary", width="stretch"):
                     st.session_state["pick_draft"] = {"season": season, "game": game, "intent": str(uuid4())}
                     st.session_state.pop("pick_review", None)
-                    st.rerun()
 
 
 def post_action(path, season, payload=None, query=None):
@@ -120,24 +157,68 @@ def post_action(path, season, payload=None, query=None):
     return result
 
 
+def dismiss_pick_dialog():
+    st.session_state.pop("pick_draft", None)
+    st.session_state.pop("pick_review", None)
+
+
+def submit_pick_dialog(season, intent):
+    draft = st.session_state.get("pick_draft")
+    if not draft or draft["season"] != season or draft["intent"] != intent:
+        return
+    game, pick, stake = draft["game"], draft["pick"], draft["stake"]
+    try:
+        result = post_action("/bets/", season, {"season_id": season, "game_id": game["id"],
+            "pick": pick, "stake": f"{stake:.2f}", "idempotency_key": draft["idempotency_key"]})
+        team = game["home_name"] if pick == game["home"] else game["away_name"]
+        action = "already recorded" if result.get("repeated") else "placed"
+        st.session_state["pick_success"] = f"{team}: ${stake:,.2f} virtual wager {action}. Bankroll: ${result['balance']:,.2f}."
+        st.session_state.pop("pick_draft", None)
+        fetch_json.clear()
+    except ValueError as exc:
+        draft["submission_error"] = str(exc)
+
+
+@st.dialog("Your Pick", width="medium", on_dismiss=dismiss_pick_dialog)
 def pick_panel(season, balance):
     draft = st.session_state.get("pick_draft")
     if not draft or draft["season"] != season:
-        return
+        # A dialog callback cleared the draft. Close it and refresh the page.
+        st.rerun()
     game, intent = draft["game"], draft["intent"]
     with st.container(border=True):
-        st.subheader("Your Pick")
         st.markdown(matchup_card(game), unsafe_allow_html=True)
         st.caption(f"Bankroll: ${balance:,.2f}. Game eligibility and funds are checked when you place your pick.")
         pick = st.radio("Pick a winner", [game["away"], game["home"]],
                         index=[game["away"], game["home"]].index(draft.get("pick", game["away"])),
                         format_func=lambda team: game["away_name"] if team == game["away"] else game["home_name"],
-                        key=f"winner_{intent}")
-        stake = st.number_input("Virtual wager ($)", min_value=0.01, max_value=5000.0,
-                                value=draft.get("stake", min(50.0, max(0.01, balance))), step=1.0, format="%.2f", key=f"wager_{intent}")
-        # These are non-widget draft fields: Streamlit removes hidden widgets
-        # when another section renders, but the chosen team/wager must survive.
-        draft.update(pick=pick, stake=stake)
+                        key=f"winner_{intent}", on_change=remember_team, args=(intent,))
+        limit = maximum_dollars(balance)
+        # Seed widget values only before rendering. Durable draft fields survive
+        # page changes and early failed reads, unlike Streamlit widget state.
+        dollars = initial_wager(draft, limit)
+        slider_key, number_key = f"wager_slider_{intent}", f"wager_{intent}"
+        if draft.get("wager_ui_version") != 2 or draft.get("stake_dollars") != dollars:
+            st.session_state[slider_key] = st.session_state[number_key] = dollars
+            draft.pop("wager_error", None)
+        draft.pop("stake_cents", None)
+        draft.update(stake=dollars, stake_dollars=dollars, wager_ui_version=2, pick=pick)
+        for key in (slider_key, number_key):
+            if key not in st.session_state:
+                st.session_state[key] = dollars
+        st.slider("Choose virtual wager ($)", min_value=1 if limit > 1 else 0,
+                  max_value=max(1, limit), step=1, key=slider_key, format="$%d",
+                  disabled=limit <= 1, on_change=synchronize_wager,
+                  args=(intent, slider_key, number_key, limit))
+        with st.container(key="exact_wager"):
+            st.number_input("Exact virtual wager ($)", min_value=1, max_value=max(1, limit),
+                            step=1, format="%d", key=number_key, disabled=limit == 0,
+                            on_change=synchronize_wager, args=(intent, number_key, slider_key, limit))
+        if limit == 0:
+            st.info("At least $1 in available virtual funds is needed for a whole-dollar pick.")
+        if draft.get("wager_error"):
+            st.error(draft["wager_error"])
+        stake = draft["stake"]
         first, second = st.columns(2)
         first.metric("Potential profit", f"${stake:,.2f}")
         second.metric("Potential total return", f"${stake * 2:,.2f}")
@@ -146,21 +227,13 @@ def pick_panel(season, balance):
         # Never generate a new key merely because a response was lost.
         legacy = st.session_state.pop("pick_review", None)
         legacy_key = legacy["key"] if legacy and legacy.get("fingerprint", [None])[0] == intent else intent
-        request_key = draft.setdefault("idempotency_key", legacy_key)
-        if st.button("Place My Pick", key=f"place_{intent}", type="primary"):
-            try:
-                result = post_action("/bets/", season, {"season_id": season, "game_id": game["id"],
-                    "pick": pick, "stake": f"{stake:.2f}", "idempotency_key": request_key})
-                team = game["home_name"] if pick == game["home"] else game["away_name"]
-                action = "already recorded" if result.get("repeated") else "placed"
-                st.session_state["pick_success"] = f"{team}: ${stake:,.2f} virtual wager {action}. Bankroll: ${result['balance']:,.2f}."
-                st.session_state.pop("pick_draft", None)
-                fetch_json.clear(); st.rerun()
-            except ValueError as exc:
-                st.error(str(exc))
-        if st.button("Cancel", key=f"close_{intent}"):
-            st.session_state.pop("pick_draft", None)
-            st.rerun()
+        draft.setdefault("idempotency_key", legacy_key)
+        if draft.get("submission_error"):
+            st.error(draft.pop("submission_error"))
+        st.button("Place My Pick", key=f"place_{intent}", type="primary",
+                  disabled=limit == 0 or bool(draft.get("wager_error")),
+                  on_click=submit_pick_dialog, args=(season, intent))
+        st.button("Cancel", key=f"close_{intent}", on_click=dismiss_pick_dialog)
 
 
 def show_snapshots(path: str, season: str, title: str):
@@ -184,9 +257,9 @@ def show_snapshots(path: str, season: str, title: str):
         st.warning(f"Saved snapshot unavailable: {exc}")
 
 
-def show_live_games(season, enabled=False, balance=0):
+def show_live_games(season, enabled=False, balance=0, saved_picks=()):
     st.subheader("NBA Games")
-    st.caption("All live game times: America/Chicago (CST/CDT). Team badges are abbreviation fallbacks, not official logos.")
+    st.caption("All live game times: America/Chicago (CST/CDT).")
     day_key = f"game_day_{season}"
     saved_day_key = f"selected_game_day_{season}"
     today = datetime.now(ZoneInfo("America/Chicago")).date()
@@ -209,8 +282,6 @@ def show_live_games(season, enabled=False, balance=0):
     if draft and draft["game"].get("date") != anchor.isoformat():
         st.session_state.pop("pick_draft", None)
         st.session_state.pop("pick_review", None)
-    if enabled:
-        pick_panel(season, balance)
     try:
         feed = fetch_schedule(season, anchor.isoformat())
         if not feed.get("verified"):
@@ -231,7 +302,12 @@ def show_live_games(season, enabled=False, balance=0):
         daily = [game for game in feed.get("today", []) if game.get("date") == anchor.isoformat()]
         cards(daily, "Today's Games" if anchor == today else f"Games on {anchor:%b %d}",
               "No NBA games are scheduled for this selected date. Try Previous Day, Today, or Next Day.",
-              enabled and not feed.get("stale"), season, "daily")
+              enabled and not feed.get("stale"), season, "daily", saved_picks)
+        # Render after the schedule without inserting a panel into its layout.
+        # Dialog controls rerun only this fragment; cancel/submit close it with
+        # one deliberate full rerun to refresh the surrounding page.
+        if enabled and st.session_state.get("pick_draft", {}).get("season") == season:
+            pick_panel(season, balance)
     except (requests.RequestException, ValueError, KeyError) as exc:
         st.warning(f"Live games unavailable: {exc}. Your season dashboard is unaffected.")
 
@@ -263,14 +339,23 @@ def show_performance(bets, stats, season):
         st.plotly_chart(figure, width="stretch", key=f"{key}_{season}")
 
 
+# Keep a durable copy even when upgrading an already-open app session whose
+# widgets predate the callbacks, or when a read fails before they can render.
+for widget_key, saved_key in (("active_section", "navigation_page"), ("selected_season", "chosen_season")):
+    if widget_key in st.session_state:
+        st.session_state[saved_key] = st.session_state[widget_key]
+
 try:
     registry = fetch_seasons()
     choices = [item["season_id"] for item in registry["seasons"]]
     labels = {item["season_id"]: item["label"] for item in registry["seasons"]}
     context, control = st.columns([3, 2], vertical_alignment="center")
     with control:
+        if "selected_season" not in st.session_state:
+            st.session_state["selected_season"] = st.session_state.get("chosen_season", registry["default_season"])
         season = st.selectbox("NBA season", choices, index=choices.index(registry["default_season"]),
-                              format_func=lambda value: labels[value], key="selected_season")
+                              format_func=lambda value: labels[value], key="selected_season",
+                              on_change=remember_widget, args=("selected_season", "chosen_season"))
     archived = next(item["archived"] for item in registry["seasons"] if item["season_id"] == season)
     betting_enabled = registry.get("betting_enabled", False) and not archived
     settlement_enabled = registry.get("settlement_enabled", False) and not archived
@@ -299,9 +384,12 @@ try:
     # Every betting widget reruns the script, so navigation must be a widget
     # backed by session state rather than a recreated, Home-first tab group.
     with st.container(key="section_navigation"):
+        if "active_section" not in st.session_state:
+            st.session_state["active_section"] = st.session_state.get("navigation_page", "Home / Dashboard")
         section = st.radio("Navigation",
             ["Home / Dashboard", "NBA Games", "My Picks", "Performance", "Season Archive"],
-            key="active_section", horizontal=True, label_visibility="collapsed")
+            key="active_section", horizontal=True, label_visibility="collapsed",
+            on_change=remember_widget, args=("active_section", "navigation_page"))
     if section == "Home / Dashboard":
         st.markdown(story_card(season, archived), unsafe_allow_html=True)
         st.markdown('<div class="section-kicker">SEASON SUMMARY</div>', unsafe_allow_html=True)
@@ -328,7 +416,7 @@ try:
             st.info("Archive view: original saved schedules only. No live requests or new results are substituted.")
             show_snapshots("/games", season, "Archived schedules")
         else:
-            show_live_games(season, betting_enabled, wallet["balance"])
+            show_live_games(season, betting_enabled, wallet["balance"], bets)
     elif section == "My Picks":
         st.subheader("My Picks")
         if not bets:

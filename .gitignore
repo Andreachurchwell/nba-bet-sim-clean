@@ -51,3 +51,36 @@ dist/
 # Private, installation-specific recovery tools
 /scripts/private_recovery/
 /scripts/backfill_exact_results.py
+
+# Collected team artwork: private local use; redistribution rights unverified
+/assets/76ers.png
+/assets/blazers.png
+/assets/bucks.jpg
+/assets/bulls.png
+/assets/cavs.png
+/assets/celtics.png
+/assets/clippers.png
+/assets/grizzlies.png
+/assets/hawks.png
+/assets/heat.png
+/assets/hornets.png
+/assets/jazz.png
+/assets/kings.png
+/assets/knicks.jpg
+/assets/lakers.png
+/assets/magic.jpg
+/assets/mavs.png
+/assets/nets.png
+/assets/nuggets.png
+/assets/okc.png
+/assets/pacers.png
+/assets/pelicans.png
+/assets/pistons.png
+/assets/raptors.png
+/assets/rockets.png
+/assets/spurs.jpg
+/assets/suns.png
+/assets/warriors.png
+/assets/wizards.png
+/assets/wolves.png
+/backend/kings.png

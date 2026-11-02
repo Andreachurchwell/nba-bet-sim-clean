@@ -35,3 +35,14 @@ h1,h2,h3,p,label,[data-testid="stMetricLabel"],[data-testid="stMetricValue"]{col
 .st-key-section_navigation [data-baseweb="radio"]{margin:0;border:1px solid #E5D6ED;border-radius:22px;background:#FFF9F0;padding:8px 14px}
 .st-key-section_navigation [data-baseweb="radio"]:has(input:checked){background:#63328c;border-color:#63328c}
 .st-key-section_navigation [data-baseweb="radio"]:has(input:checked) p{color:#FFF9F0}
+.placed-pick{margin-top:12px;padding:9px 11px;border:1px solid #e5d3ef;border-left:3px solid #F3C96B;border-radius:10px;background:#FFF9F0;color:#452859;font-size:11px;line-height:1.5}
+.placed-pick strong,.placed-pick span{display:block}.placed-pick strong{color:#76459c;font-size:10px}.placed-pick span{overflow-wrap:anywhere}
+[data-testid="stSlider"] [role="slider"]{background-color:#9A57D6;border:2px solid #F3C96B}
+.team-badge.has-logo{background:#fff}.team-badge.has-logo img{width:40px;height:40px;object-fit:contain}
+.pick-choice{display:flex;align-items:center;gap:10px;margin:15px 0 8px}.pick-card .pick-choice h3{margin:0}
+.pick-matchup{display:flex;align-items:center;gap:8px;margin:8px 0 12px;font-size:12px;color:#715D7D;flex-wrap:wrap}
+.pick-matchup .team-badge{flex-basis:28px;width:28px;height:28px;border-radius:8px}.pick-matchup .team-badge img{width:24px;height:24px;object-fit:contain}
+.st-key-exact_wager [data-testid="stNumberInputStepUp"],.st-key-exact_wager [data-testid="stNumberInputStepDown"]{display:none}
+.st-key-exact_wager input[type="number"]{appearance:textfield;-moz-appearance:textfield}
+.st-key-exact_wager input::-webkit-inner-spin-button,.st-key-exact_wager input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+[data-testid="stDialog"] [role="dialog"]{background:linear-gradient(145deg,#FFF9F0,#F5ECFC);border:1px solid #D9B8F0;border-radius:20px;color:#321D45}

@@ -205,7 +205,8 @@ class MatchupMarkupTests(unittest.TestCase):
         self.assertTrue('PICK DETAILS' in markup)
 
     def test_abbreviation_fallback_and_missing_asset(self):
-        badge = team_badge("CHI")
+        with patch("ui_components.APPROVED_TEAM_LOGOS", {}):
+            badge = team_badge("CHI")
         self.assertIn('class="team-badge"', badge)
         self.assertNotIn("<img", badge)
         self.assertIsNone(image_uri(str(ASSETS / "missing.png")))
