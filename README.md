@@ -26,7 +26,8 @@ bets. The app is currently built for private, local, single-user use.
   The 2026-27 season is active; 2025-26 is a separate, read-only archive.
 - **Check results when you're ready.** Use **Refresh Results / Settle Eligible
   Bets** in My Picks to check pending games and update completed picks. Settlement
-  is manual, with up to three different games checked per click.
+  is manual: one click checks all pending games until the pass finishes or the
+  provider asks it to stop. The summary shows wins, losses, refunds, and picks still open.
 - **See how you're doing.** View open and settled picks, wins and losses,
   profit/loss, win percentage, ROI, and performance charts. Download CSV copies
   of your records and available saved schedules/results.

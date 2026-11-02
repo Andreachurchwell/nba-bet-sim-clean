@@ -39,8 +39,31 @@ a complete one-page schedule response; pagination can add calls.
 | Browse next/previous date in a warm week | Typically 1 for the new range | 0 |
 | Confirm a new valid bet | 1 uncached verification, plus possible schedule refetch on rerun | 1 uncached verification; financial refresh does not evict schedules |
 | Repeat an already accepted idempotency key | 0 verifications | 0 verifications |
-| Manual settlement | Up to 3 distinct-game verifications | Same up to 3 when available; first 429 stops subsequent provider calls via shared cooldown |
+| Manual settlement | Up to 3 distinct-game verifications | One fresh lookup per unique pending game; stops at the first provider error or cooldown |
 | Retry/other date during provider cooldown | Other ranges/verifications could still call | 0 provider requests until retry is permitted |
+
+## One-click settlement follow-up
+
+The original three-game cap limited verification requests per click. Settlement
+now checks all unique pending game IDs in one pass, without automatically
+retrying or waiting through provider failures. Each game's verified results are
+committed immediately under the existing financial lock and journal, so earlier
+verifications do not expire while later games are fetched. Payout and refund
+rules are unchanged; only open rows can receive a payout.
+
+The first provider error stops the pass. Already committed results stay saved;
+the response reports settled/won/lost/refunded counts, remaining open picks,
+the recorded balance, successful checks, interruption status, and Retry-After
+when available. A cursor resumes at unchecked games first, then wraps to recheck
+earlier postponed/unfinished games. Each ID is fetched at most once per pass.
+The shared provider cooldown still blocks requests from settlement, schedules,
+and placement until retry is allowed. No stale schedule approves settlement.
+
+The Streamlit button sends one settlement request. Its connection timeout stays
+bounded, while its response timeout allows a complete multi-game pass; individual
+provider lookups retain their existing bounded timeouts. Financial display caches
+refresh after the response, without clearing schedule caches. A lost response
+can be retried safely because committed rows are no longer open.
 
 A measured comparison used the private pre-fix source and a mocked transport,
 not live traffic. Schedule reads at t=0/16/32/48, one verification, and the success

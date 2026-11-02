@@ -291,48 +291,70 @@ class BettingService:
             raise ArchivedSeasonError("Archived bets are never settled")
         rows, _ = self.snapshot(season)
         pending_ids = sorted({int(r["game_id"]) for r in rows if r["status"] == "open"})
-        ids = ([value for value in pending_ids if value > after_game_id] or pending_ids)[:3]
-        verified, warnings = {}, []
+        # Resume after the last successful verification, then wrap so unfinished
+        # earlier games are not forgotten. No game is fetched twice in this pass.
+        ids = [value for value in pending_ids if value > after_game_id]
+        ids += [value for value in pending_ids if value <= after_game_id]
+        warnings, outcomes = [], {"won": 0, "lost": 0, "refunded": 0}
+        changed = checked = attempted = 0
+        cursor, interrupted, retry_after = after_game_id, False, None
         for game_id in ids:
+            # Another settlement request may already have completed this game.
+            with season_lock(self.store, season):
+                rows, _ = self._read()
+                if not any(r["status"] == "open" and int(r["game_id"]) == game_id for r in rows):
+                    continue
+            attempted += 1
             try:
-                verified[game_id] = self._fresh(game_id)
+                game = self._fresh(game_id)
             except (FeedUnavailable, BetError) as exc:
-                warnings.append(str(exc))
-        changed = 0
-        with season_lock(self.store, season):
-            rows, wallet = self._read()
-            balance = money(wallet["balance"])
-            for row in rows:
-                if row["status"] != "open":
-                    continue
-                game = verified.get(int(row["game_id"]))
-                if not game:
-                    continue
-                if (str(game.get("home_team_id")), str(game.get("away_team_id"))) != (row["home_team_id"], row["away_team_id"]) or game["away"] + " @ " + game["home"] != row["matchup"]:
-                    warnings.append("A game's participating teams changed; its pick remains pending.")
-                    continue
-                if self.now() - datetime.fromisoformat(game["verified_at"]) > timedelta(seconds=30):
-                    warnings.append("A result verification expired; retry settlement.")
-                    continue
-                stake = money(row["stake"])
-                state = game["status_state"]
-                if state in ("canceled", "cancelled"):
-                    status, payout, reason = "void", stake, "verified_cancellation_refund"
-                elif state == "final":
-                    home, away = game["home_score"], game["away_score"]
-                    if home is None or away is None or home == away:
-                        warnings.append("A final score is incomplete or tied; its pick remains pending.")
+                message = str(exc).replace("Fresh picks remain paused; your funds are unchanged.",
+                                           "Unchecked results remain pending.")
+                warnings.append("Settlement stopped: " + message)
+                interrupted, retry_after = True, getattr(exc, "retry_after", None)
+                break
+            checked += 1
+            cursor = game_id
+            # Commit this verified game's results immediately, rather than
+            # letting early verifications expire while later requests run.
+            with season_lock(self.store, season):
+                rows, wallet = self._read()
+                balance = money(wallet["balance"])
+                game_changed = 0
+                for row in rows:
+                    if row["status"] != "open" or int(row["game_id"]) != game_id:
                         continue
-                    winner = game["home"] if home > away else game["away"]
-                    status = "won" if row["pick"] == winner else "lost"
-                    payout, reason = (stake * 2 if status == "won" else Decimal(0)), "verified_final"
-                else:
-                    continue
-                row.update(status=status, payout=str(payout), settled_at=self.now().isoformat(),
-                           settled_verified_at=game["verified_at"], settlement_reason=reason)
-                balance += payout; changed += 1
-            if changed:
-                self._commit(rows, balance)
-            return {"season_id": season, "settled": changed, "balance": float(balance), "warnings": warnings,
-                    "pending": sum(r["status"] == "open" for r in rows), "checked_games": len(ids),
-                    "next_after_game_id": ids[-1] if ids else 0}
+                    if (str(game.get("home_team_id")), str(game.get("away_team_id"))) != (row["home_team_id"], row["away_team_id"]) or game["away"] + " @ " + game["home"] != row["matchup"]:
+                        warnings.append("A game's participating teams changed; its pick remains pending.")
+                        continue
+                    if self.now() - datetime.fromisoformat(game["verified_at"]) > timedelta(seconds=30):
+                        warnings.append("A result verification expired; retry settlement.")
+                        continue
+                    stake = money(row["stake"])
+                    state = game["status_state"]
+                    if state in ("canceled", "cancelled"):
+                        status, payout, reason = "void", stake, "verified_cancellation_refund"
+                    elif state == "final":
+                        home, away = game["home_score"], game["away_score"]
+                        if home is None or away is None or home == away:
+                            warnings.append("A final score is incomplete or tied; its pick remains pending.")
+                            continue
+                        winner = game["home"] if home > away else game["away"]
+                        status = "won" if row["pick"] == winner else "lost"
+                        payout, reason = (stake * 2 if status == "won" else Decimal(0)), "verified_final"
+                    else:
+                        continue
+                    row.update(status=status, payout=str(payout), settled_at=self.now().isoformat(),
+                               settled_verified_at=game["verified_at"], settlement_reason=reason)
+                    balance += payout
+                    game_changed += 1
+                    outcomes["refunded" if status == "void" else status] += 1
+                if game_changed:
+                    self._commit(rows, balance)
+                    changed += game_changed
+        rows, wallet = self.snapshot(season)
+        return {"season_id": season, "settled": changed, "balance": wallet["balance"],
+                "warnings": list(dict.fromkeys(warnings)), "pending": sum(r["status"] == "open" for r in rows),
+                "checked_games": checked, "attempted_games": attempted,
+                "next_after_game_id": cursor, "interrupted": interrupted, "retry_after": retry_after,
+                **outcomes}

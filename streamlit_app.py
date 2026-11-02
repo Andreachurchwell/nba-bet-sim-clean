@@ -96,8 +96,13 @@ def cards(games, title, message, enabled=False, season=None, group="games"):
 
 def post_action(path, season, payload=None, query=None):
     try:
-        response = requests.post(f"{API}{path}", params={**(query or {}), "season": season}, json=payload, timeout=45)
+        # A settlement pass can check many games. Each provider lookup remains
+        # bounded by backend timeouts; do not abandon a healthy pass after 45s.
+        timeout = (5, None) if path == "/bets/settle" else 45
+        response = requests.post(f"{API}{path}", params={**(query or {}), "season": season}, json=payload, timeout=timeout)
     except requests.RequestException:
+        if path == "/bets/settle":
+            raise ValueError("Settlement could not be confirmed. Refresh My Picks before trying again; completed payouts will not be paid twice.") from None
         raise ValueError("The result could not be confirmed. Retry this same pick; do not start another until the result is known.") from None
     if response.status_code >= 400:
         try:
@@ -275,7 +280,8 @@ try:
         st.markdown(f'<div class="season-context"><strong>{season}</strong> &nbsp; / &nbsp; {"Season Archive" if archived else "Current NBA Season"}</div>', unsafe_allow_html=True)
         st.markdown('<div class="maintenance-note">&#9675; ' + ("Archive &nbsp; Read-only" if archived else ("Classic picks &nbsp; Virtual money only" if betting_enabled else "Read-only &nbsp; Betting &amp; settlement paused")) + '</div>', unsafe_allow_html=True)
     if st.session_state.get("pick_success"):
-        st.success(st.session_state.pop("pick_success"))
+        notice = st.warning if st.session_state.pop("settlement_paused", False) else st.success
+        notice(st.session_state.pop("pick_success"))
     if st.button("Refresh view", help="Refreshes displayed reads. Schedules may remain cached for five minutes; pick placement always verifies fresh status."):
         fetch_json.clear()
         fetch_seasons.clear()
@@ -344,9 +350,18 @@ try:
                     st.caption("Settled picks will appear here after verified results.")
                 if settlement_enabled and pending and st.button("Refresh Results / Settle Eligible Bets", type="primary"):
                     try:
-                        result = post_action("/bets/settle", season, query={"after_game_id": st.session_state.get(f"settle_cursor_{season}", 0)})
+                        with st.spinner("Checking pending game results..."):
+                            result = post_action("/bets/settle", season, query={"after_game_id": st.session_state.get(f"settle_cursor_{season}", 0)})
                         st.session_state[f"settle_cursor_{season}"] = result["next_after_game_id"]
-                        st.session_state["pick_success"] = f"Checked {result['checked_games']} games; settled {result['settled']} picks. {result['pending']} remain pending. " + " ".join(result.get("warnings", []))
+                        summary = (f"Settled {result['settled']} picks: {result['won']} won, {result['lost']} lost, "
+                                   f"{result['refunded']} refunded. {result['pending']} still open. "
+                                   f"Bankroll: ${result['balance']:,.2f}. Checked {result['checked_games']} games.")
+                        if result.get("interrupted"):
+                            summary += " Checking paused; completed payouts are saved."
+                        if result.get("retry_after"):
+                            summary += f" Try again in {result['retry_after']} seconds."
+                        st.session_state["pick_success"] = summary + " " + " ".join(result.get("warnings", []))
+                        st.session_state["settlement_paused"] = result.get("interrupted", False)
                         fetch_json.clear(); st.rerun()
                     except ValueError as exc:
                         st.error(str(exc))

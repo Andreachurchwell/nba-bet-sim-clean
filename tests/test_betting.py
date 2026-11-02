@@ -203,16 +203,75 @@ class BettingTests(unittest.TestCase):
         self.assertEqual(sum(result['settled'] for result in results),1)
         self.assertEqual(self.balance(),5050)
 
-    def test_settlement_cursor_reaches_games_after_postponed_batch(self):
+    def test_one_settlement_pass_checks_all_games_and_rechecks_postponed(self):
         for game_id in (101,102,103,104):self.place(game_id=game_id)
         self.provider.changes={'status_state':'postponed'}
         first=self.service.settle('2026-27')
-        self.assertEqual(first['checked_games'],3)
-        self.assertEqual(first['next_after_game_id'],103)
+        self.assertEqual(first['checked_games'],4)
+        self.assertEqual(first['next_after_game_id'],104)
+        self.assertEqual(first['settled'],0)
+        self.assertEqual(first['pending'],4)
         self.provider.changes={'status_state':'final','home_score':110,'away_score':100}
         second=self.service.settle('2026-27',first['next_after_game_id'])
-        self.assertEqual(second['settled'],1)
+        self.assertEqual(second['settled'],4)
         self.assertEqual(second['next_after_game_id'],104)
+
+    def test_all_pending_games_deduplicated_and_outcomes_reported(self):
+        from unittest.mock import patch
+        for game_id in range(101, 107):
+            self.place(game_id=game_id)
+        self.place(game_id=101, pick="MIA")
+        original = self.provider.verify_game
+        seen = []
+        def verify(game_id):
+            seen.append(game_id)
+            state = {103: "canceled", 104: "postponed", 105: "in_progress"}.get(game_id, "final")
+            return {**original(game_id), "status_state": state, "home_score": 110, "away_score": 100}
+        with patch.object(self.provider, "verify_game", side_effect=verify):
+            result = self.service.settle("2026-27")
+            self.assertEqual(seen, list(range(101, 107)))
+            self.assertEqual(result["checked_games"], 6)
+            self.assertEqual((result["won"], result["lost"], result["refunded"]), (3, 1, 1))
+            self.assertEqual((result["settled"], result["pending"], result["balance"]), (5, 2, 5000))
+            seen.clear()
+            again = self.service.settle("2026-27", result["next_after_game_id"])
+            self.assertEqual(seen, [104, 105])
+            self.assertEqual((again["settled"], again["pending"], again["balance"]), (0, 2, 5000))
+
+    def test_partial_provider_error_stops_and_resumes_without_double_payment(self):
+        for game_id in range(101, 106):
+            self.place(game_id=game_id)
+        original = self.provider.verify_game
+        seen = []
+        def verify(game_id):
+            seen.append(game_id)
+            if game_id == 103:
+                raise FeedUnavailable("Synthetic provider failure")
+            return {**original(game_id), "status_state": "final", "home_score": 110, "away_score": 100}
+        with patch.object(self.provider, "verify_game", side_effect=verify):
+            result = self.service.settle("2026-27")
+        self.assertEqual(seen, [101, 102, 103])
+        self.assertEqual((result["settled"], result["pending"], result["balance"]), (2, 3, 4950))
+        self.assertTrue(result["interrupted"])
+        self.assertEqual(result["next_after_game_id"], 102)
+        self.provider.changes = {"status_state": "final", "home_score": 110, "away_score": 100}
+        resumed = self.service.settle("2026-27", result["next_after_game_id"])
+        self.assertEqual((resumed["settled"], resumed["pending"], resumed["balance"]), (3, 0, 5250))
+        self.assertEqual(self.service.settle("2026-27")["settled"], 0)
+
+    def test_results_are_committed_before_later_games_use_up_freshness_window(self):
+        for game_id in range(101, 106):
+            self.place(game_id=game_id)
+        clock = [datetime.now(timezone.utc)]
+        original = self.provider.verify_game
+        def verify(game_id):
+            clock[0] += timedelta(seconds=20)
+            return {**original(game_id), "verified_at": clock[0].isoformat(),
+                    "status_state": "final", "home_score": 110, "away_score": 100}
+        service = BettingService(self.store, self.provider, now=lambda: clock[0])
+        with patch.object(self.provider, "verify_game", side_effect=verify):
+            result = service.settle("2026-27")
+        self.assertEqual((result["settled"], result["pending"], result["balance"]), (5, 0, 5250))
 
     def test_corrupt_or_external_changes_block_without_reset(self):
         self.place()
@@ -499,10 +558,109 @@ except BetError as exc: print('LOCKED:'+str(exc.status))
         first=service.settle('2026-27')
         self.assertEqual(first['settled'],0)
         self.assertEqual(first['pending'],3)
+        self.assertTrue(first['interrupted'])
+        self.assertEqual(first['retry_after'],120)
+        self.assertEqual(first['checked_games'],0)
         self.assertEqual(transport.get.call_count,1)
         service.settle('2026-27')
         self.assertEqual(transport.get.call_count,1)
         self.assertEqual(self.balance(),4850)
+
+    def test_partial_settlement_429_cooldown_and_resume(self):
+        from unittest.mock import Mock
+        from test_live_games import fixture, response
+        for game_id in range(101, 106):
+            self.place(game_id=game_id)
+        clock, recovered, seen = [0], [False], []
+        def request(url, **kwargs):
+            game_id = int(url.rsplit("/", 1)[-1])
+            seen.append(game_id)
+            if game_id == 103 and not recovered[0]:
+                limited = response([], status=429)
+                limited.headers = {"Retry-After": "120"}
+                return limited
+            reply = Mock(status_code=200, headers={})
+            state = "postponed" if game_id == 102 and not recovered[0] else "final"
+            reply.json.return_value = {"data": fixture(id=game_id, status_state=state,
+                status="Final" if state == "final" else "Postponed",
+                home_team_score=110, visitor_team_score=100)}
+            return reply
+        transport = Mock()
+        transport.get.side_effect = request
+        service = BettingService(self.store, LiveNBAClient(key="test", transport=transport))
+        with patch("backend.api.services.live_games.monotonic", side_effect=lambda: clock[0]):
+            first = service.settle("2026-27")
+            self.assertEqual(seen, [101, 102, 103])
+            self.assertEqual((first["settled"], first["pending"], first["balance"]), (1, 4, 4850))
+            self.assertEqual((first["checked_games"], first["attempted_games"]), (2, 3))
+            self.assertEqual(first["retry_after"], 120)
+            self.assertTrue(first["interrupted"])
+            self.assertNotIn("funds are unchanged", " ".join(first["warnings"]))
+            paused = service.settle("2026-27", first["next_after_game_id"])
+            self.assertEqual(seen, [101, 102, 103])
+            self.assertEqual((paused["settled"], paused["pending"]), (0, 4))
+            clock[0], recovered[0] = 121, True
+            resumed = service.settle("2026-27", paused["next_after_game_id"])
+            self.assertEqual(seen[3:], [103, 104, 105, 102])
+            self.assertEqual((resumed["settled"], resumed["pending"], resumed["balance"]), (4, 0, 5250))
+            self.assertEqual(service.settle("2026-27")["settled"], 0)
+            self.assertEqual(transport.get.call_count, 7)
+
+    def _exercise_settlement_button(self, interrupted):
+        import streamlit as st
+        from streamlit.testing.v1 import AppTest
+        for game_id in range(101, 105):
+            self.place(game_id=game_id)
+        self.place(game_id=101, pick="MIA")
+        original, paused = self.provider.verify_game, [interrupted]
+        def verify(game_id):
+            if game_id == 103 and paused[0]:
+                raise FeedUnavailable("Synthetic provider pause", retry_after=90)
+            return {**original(game_id), "status_state": "final", "home_score": 110, "away_score": 100}
+        app.dependency_overrides[get_store] = lambda: self.store
+        app.dependency_overrides[get_live_client] = lambda: self.provider
+        client, submissions = TestClient(app), []
+        def submit(url, params=None, json=None, **kwargs):
+            submissions.append(params)
+            self.assertEqual(kwargs["timeout"], (5, None))
+            return client.post(url.split("8000", 1)[-1], params=params, json=json)
+        st.cache_data.clear()
+        try:
+            with patch.object(self.provider, "verify_game", side_effect=verify), \
+                 patch("requests.get", side_effect=lambda url, params=None, **kw:
+                       client.get(url.split("8000", 1)[-1], params=params)), \
+                 patch("requests.post", side_effect=submit):
+                view = AppTest.from_file(str(PROJECT / "streamlit_app.py"), default_timeout=30).run()
+                view.radio(key="active_section").set_value("My Picks").run()
+                next(b for b in view.button if b.label == "Refresh Results / Settle Eligible Bets").click().run()
+                self.assertEqual(len(view.exception), 0)
+                self.assertEqual(len(submissions), 1)
+                if interrupted:
+                    self.assertTrue(any("Settled 3 picks: 2 won, 1 lost, 0 refunded" in w.value and
+                        "2 still open" in w.value and "90 seconds" in w.value for w in view.warning))
+                    self.assertEqual(self.balance(), 4950)
+                    paused[0] = False
+                    next(b for b in view.button if b.label == "Refresh Results / Settle Eligible Bets").click().run()
+                    self.assertTrue(any("Settled 2 picks" in s.value and "0 still open" in s.value for s in view.success))
+                else:
+                    self.assertTrue(any("Settled 5 picks: 4 won, 1 lost, 0 refunded" in s.value and
+                        "0 still open" in s.value and "$5,150.00" in s.value for s in view.success))
+                self.assertEqual(self.balance(), 5150)
+                self.assertEqual(sum(r["status"] == "open" for r in self.service.snapshot("2026-27")[0]), 0)
+                count = len(submissions)
+                view.run()
+                self.assertEqual(len(submissions), count)
+                self.assertEqual(view.radio(key="active_section").value, "My Picks")
+        finally:
+            client.close()
+            app.dependency_overrides.clear()
+            st.cache_data.clear()
+
+    def test_one_button_settles_all_pending_games(self):
+        self._exercise_settlement_button(False)
+
+    def test_one_button_partial_settlement_reports_and_resumes(self):
+        self._exercise_settlement_button(True)
 
     def test_form_reruns_and_financial_refresh_do_not_refetch_schedule(self):
         import streamlit as st
