@@ -25,6 +25,7 @@ from .season_store import BET_FIELDS, ArchivedSeasonError, SeasonStorageError, S
 
 ACTIVE = "2026-27"
 MAX_STAKE = Decimal("5000.00")
+SETTLEMENT_WORKFLOW = "all_pending_fresh_batch_v1"
 _threads = {}
 _threads_guard = threading.Lock()
 
@@ -229,8 +230,9 @@ class BettingService:
             raise BetError("This confirmation was already used for a different pick. Start a new pick.", 409)
         return existing
 
-    def _fresh(self, game_id):
-        game = self.provider.verify_game(game_id)
+    def _fresh(self, game_id, game=None):
+        if game is None:
+            game = self.provider.verify_game(game_id)
         try:
             verified = datetime.fromisoformat(game["verified_at"])
             age = self.now() - verified
@@ -298,7 +300,21 @@ class BettingService:
         warnings, outcomes = [], {"won": 0, "lost": 0, "refunded": 0}
         changed = checked = attempted = 0
         cursor, interrupted, retry_after = after_game_id, False, None
-        for game_id in ids:
+        batch = callable(getattr(type(self.provider), "verify_games", None))
+        dates = {game_id: next(r["date"] for r in rows if int(r["game_id"]) == game_id and r["status"] == "open") for game_id in ids}
+        results = iter(self.provider.verify_games(dates)) if batch else iter((identity, None) for identity in ids)
+        stop_reason = None
+        while True:
+            try:
+                game_id, verified_game = next(results)
+            except StopIteration:
+                break
+            except (FeedUnavailable, BetError) as exc:
+                message = str(exc).replace("Fresh picks remain paused; your funds are unchanged.", "Unchecked results remain pending.")
+                warnings.append("Settlement stopped: " + message)
+                interrupted, retry_after = True, getattr(exc, "retry_after", None)
+                stop_reason = getattr(exc, "code", "verification_unavailable")
+                break
             # Another settlement request may already have completed this game.
             with season_lock(self.store, season):
                 rows, _ = self._read()
@@ -306,12 +322,13 @@ class BettingService:
                     continue
             attempted += 1
             try:
-                game = self._fresh(game_id)
+                game = self._fresh(game_id, verified_game)
             except (FeedUnavailable, BetError) as exc:
                 message = str(exc).replace("Fresh picks remain paused; your funds are unchanged.",
                                            "Unchecked results remain pending.")
                 warnings.append("Settlement stopped: " + message)
                 interrupted, retry_after = True, getattr(exc, "retry_after", None)
+                stop_reason = getattr(exc, "code", "verification_unavailable")
                 break
             checked += 1
             cursor = game_id
@@ -357,4 +374,6 @@ class BettingService:
                 "warnings": list(dict.fromkeys(warnings)), "pending": sum(r["status"] == "open" for r in rows),
                 "checked_games": checked, "attempted_games": attempted,
                 "next_after_game_id": cursor, "interrupted": interrupted, "retry_after": retry_after,
+                "stop_reason": stop_reason, "total_pending_games": len(pending_ids),
+                "workflow": SETTLEMENT_WORKFLOW, "verification_mode": "date_batch" if batch else "individual",
                 **outcomes}

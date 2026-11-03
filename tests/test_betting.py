@@ -571,40 +571,94 @@ except BetError as exc: print('LOCKED:'+str(exc.status))
         from test_live_games import fixture, response
         for game_id in range(101, 106):
             self.place(game_id=game_id)
-        clock, recovered, seen = [0], [False], []
+        clock, recovered, calls = [0], [False], []
+        def raw(game_id, state="final"):
+            return fixture(id=game_id, status_state=state, status=state,
+                           home_team_score=110, visitor_team_score=100)
         def request(url, **kwargs):
-            game_id = int(url.rsplit("/", 1)[-1])
-            seen.append(game_id)
-            if game_id == 103 and not recovered[0]:
+            cursor = kwargs.get("params", {}).get("cursor")
+            calls.append(cursor)
+            if not recovered[0] and cursor is not None:
                 limited = response([], status=429)
                 limited.headers = {"Retry-After": "120"}
                 return limited
-            reply = Mock(status_code=200, headers={})
-            state = "postponed" if game_id == 102 and not recovered[0] else "final"
-            reply.json.return_value = {"data": fixture(id=game_id, status_state=state,
-                status="Final" if state == "final" else "Postponed",
-                home_team_score=110, visitor_team_score=100)}
-            return reply
+            if not recovered[0]:
+                return response([raw(101), raw(102, "postponed")], cursor=7)
+            return response([raw(i) for i in (102, 103, 104, 105)])
         transport = Mock()
         transport.get.side_effect = request
         service = BettingService(self.store, LiveNBAClient(key="test", transport=transport))
         with patch("backend.api.services.live_games.monotonic", side_effect=lambda: clock[0]):
             first = service.settle("2026-27")
-            self.assertEqual(seen, [101, 102, 103])
+            self.assertEqual(calls, [None, 7])
             self.assertEqual((first["settled"], first["pending"], first["balance"]), (1, 4, 4850))
-            self.assertEqual((first["checked_games"], first["attempted_games"]), (2, 3))
+            self.assertEqual(first["checked_games"], 2)
             self.assertEqual(first["retry_after"], 120)
+            self.assertEqual(first["stop_reason"], "rate_limit")
             self.assertTrue(first["interrupted"])
             self.assertNotIn("funds are unchanged", " ".join(first["warnings"]))
             paused = service.settle("2026-27", first["next_after_game_id"])
-            self.assertEqual(seen, [101, 102, 103])
+            self.assertEqual(calls, [None, 7])
             self.assertEqual((paused["settled"], paused["pending"]), (0, 4))
+            self.assertEqual(paused["stop_reason"], "cooldown")
             clock[0], recovered[0] = 121, True
             resumed = service.settle("2026-27", paused["next_after_game_id"])
-            self.assertEqual(seen[3:], [103, 104, 105, 102])
             self.assertEqual((resumed["settled"], resumed["pending"], resumed["balance"]), (4, 0, 5250))
             self.assertEqual(service.settle("2026-27")["settled"], 0)
-            self.assertEqual(transport.get.call_count, 7)
+            self.assertEqual(transport.get.call_count, 3)
+
+    def test_nine_unique_games_settle_in_one_click_under_five_request_quota(self):
+        import streamlit as st
+        from streamlit.testing.v1 import AppTest
+        from unittest.mock import Mock
+        from test_live_games import fixture, response
+        for game_id in range(101, 110):
+            self.place(game_id=game_id)
+        self.place(game_id=101, pick="MIA", stake="25")
+        raw = [fixture(id=i, status_state="final", status="Final", home_team_score=110,
+                       visitor_team_score=100) for i in range(101, 110)]
+        calls = []
+        def limited_transport(url, **kwargs):
+            calls.append((url, kwargs))
+            if len(calls) > 5:
+                limited = response([], status=429)
+                limited.headers = {"Retry-After": "60"}
+                return limited
+            if url.endswith("/games"):
+                return response(raw)
+            # This branch models the old per-game workflow so it would hit the
+            # real-world quota after five games instead of passing this test.
+            answer = Mock(status_code=200, headers={})
+            answer.json.return_value = {"data": next(x for x in raw if x["id"] == int(url.rsplit("/", 1)[1]))}
+            return answer
+        transport = Mock()
+        transport.get.side_effect = limited_transport
+        provider = LiveNBAClient(key="synthetic", transport=transport)
+        app.dependency_overrides[get_store] = lambda: self.store
+        app.dependency_overrides[get_live_client] = lambda: provider
+        client = TestClient(app)
+        self.addCleanup(client.close)
+        self.addCleanup(app.dependency_overrides.clear)
+        st.cache_data.clear()
+        self.addCleanup(st.cache_data.clear)
+        def submit(url, params=None, json=None, **kwargs):
+            return client.post(url.split("8000", 1)[-1], params=params, json=json)
+        with patch("requests.get", side_effect=lambda url, params=None, **kw:
+                   client.get(url.split("8000", 1)[-1], params=params)), patch("requests.post", side_effect=submit) as posts:
+            view = AppTest.from_file(str(PROJECT / "streamlit_app.py"), default_timeout=30).run()
+            view.radio(key="active_section").set_value("My Picks").run()
+            next(b for b in view.button if b.label == "Refresh Results / Settle Eligible Bets").click().run()
+            self.assertEqual(len(view.exception), 0)
+            self.assertEqual(posts.call_count, 1)
+            self.assertTrue(any("Settled 10 picks: 9 won, 1 lost" in s.value and "0 still open" in s.value
+                                and "9 of 9" in s.value for s in view.success))
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0][1]["headers"]["Cache-Control"], "no-cache")
+        self.assertEqual(calls[0][1]["params"]["per_page"], 100)
+        self.assertEqual(self.balance(), 5425)
+        repeat = BettingService(self.store, provider).settle("2026-27")
+        self.assertEqual((repeat["settled"], repeat["balance"]), (0, 5425))
+        self.assertEqual(len(calls), 1)
 
     def _exercise_settlement_button(self, interrupted):
         import streamlit as st
@@ -658,6 +712,30 @@ except BetError as exc: print('LOCKED:'+str(exc.status))
 
     def test_one_button_settles_all_pending_games(self):
         self._exercise_settlement_button(False)
+
+    def test_old_backend_is_detected_before_settlement_post(self):
+        import streamlit as st
+        import httpx
+        from streamlit.testing.v1 import AppTest
+        self.place()
+        app.dependency_overrides[get_store] = lambda: self.store
+        client = TestClient(app)
+        self.addCleanup(client.close)
+        self.addCleanup(app.dependency_overrides.clear)
+        st.cache_data.clear()
+        self.addCleanup(st.cache_data.clear)
+        def get(url, params=None, **kwargs):
+            if url.endswith("/health"):
+                return httpx.Response(200, json={"status": "ok"}, request=httpx.Request("GET", url))
+            return client.get(url.split("8000", 1)[-1], params=params)
+        with patch("requests.get", side_effect=get), patch("requests.post") as post:
+            view = AppTest.from_file(str(PROJECT / "streamlit_app.py"), default_timeout=30).run()
+            view.radio(key="active_section").set_value("My Picks").run()
+            next(b for b in view.button if b.label == "Refresh Results / Settle Eligible Bets").click().run()
+            self.assertTrue(any("Restart FastAPI" in e.value and "No settlement request" in e.value for e in view.error))
+            post.assert_not_called()
+        self.assertEqual(self.balance(), 4950)
+        self.assertEqual(self.service.snapshot("2026-27")[0][0]["status"], "open")
 
     def test_one_button_partial_settlement_reports_and_resumes(self):
         self._exercise_settlement_button(True)

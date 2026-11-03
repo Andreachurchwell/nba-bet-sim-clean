@@ -133,6 +133,15 @@ def cards(games, title, message, enabled=False, season=None, group="games", save
 
 def post_action(path, season, payload=None, query=None):
     try:
+        if path == "/bets/settle":
+            health = requests.get(f"{API}/health", timeout=5)
+            health.raise_for_status()
+            try:
+                workflow = health.json().get("settlement_workflow")
+            except (ValueError, AttributeError):
+                workflow = None
+            if workflow != "all_pending_fresh_batch_v1":
+                raise ValueError("The running backend has not loaded the latest settlement update. Restart FastAPI from this project, then try again. No settlement request was sent.")
         # A settlement pass can check many games. Each provider lookup remains
         # bounded by backend timeouts; do not abandon a healthy pass after 45s.
         timeout = (5, None) if path == "/bets/settle" else 45
@@ -443,13 +452,21 @@ try:
                         st.session_state[f"settle_cursor_{season}"] = result["next_after_game_id"]
                         summary = (f"Settled {result['settled']} picks: {result['won']} won, {result['lost']} lost, "
                                    f"{result['refunded']} refunded. {result['pending']} still open. "
-                                   f"Bankroll: ${result['balance']:,.2f}. Checked {result['checked_games']} games.")
+                                   f"Bankroll: ${result['balance']:,.2f}. Checked {result['checked_games']} "
+                                   f"of {result.get('total_pending_games', result['checked_games'])} pending games.")
                         if result.get("interrupted"):
                             summary += " Checking paused; completed payouts are saved."
                         if result.get("retry_after"):
                             summary += f" Try again in {result['retry_after']} seconds."
+                        if result.get("stop_reason") == "rate_limit":
+                            summary += " The NBA provider rate-limited this request."
+                        elif result.get("stop_reason") == "cooldown":
+                            summary += " The NBA provider cooldown is still active."
+                        old_backend = result.get("workflow") != "all_pending_fresh_batch_v1"
+                        if old_backend:
+                            summary += " The backend is running an older settlement workflow. Restart FastAPI from this project before checking remaining picks."
                         st.session_state["pick_success"] = summary + " " + " ".join(result.get("warnings", []))
-                        st.session_state["settlement_paused"] = result.get("interrupted", False)
+                        st.session_state["settlement_paused"] = result.get("interrupted", False) or old_backend
                         fetch_json.clear(); st.rerun()
                     except ValueError as exc:
                         st.error(str(exc))

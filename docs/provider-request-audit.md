@@ -39,7 +39,7 @@ a complete one-page schedule response; pagination can add calls.
 | Browse next/previous date in a warm week | Typically 1 for the new range | 0 |
 | Confirm a new valid bet | 1 uncached verification, plus possible schedule refetch on rerun | 1 uncached verification; financial refresh does not evict schedules |
 | Repeat an already accepted idempotency key | 0 verifications | 0 verifications |
-| Manual settlement | Up to 3 distinct-game verifications | One fresh lookup per unique pending game; stops at the first provider error or cooldown |
+| Manual settlement | Up to 3 distinct-game verifications | Fresh date-batched results, up to 100 rows per response; stops at provider errors/cooldowns |
 | Retry/other date during provider cooldown | Other ranges/verifications could still call | 0 provider requests until retry is permitted |
 
 ## One-click settlement follow-up
@@ -64,6 +64,39 @@ bounded, while its response timeout allows a complete multi-game pass; individua
 provider lookups retain their existing bounded timeouts. Financial display caches
 refresh after the response, without clearing schedule caches. A lost response
 can be retried safely because committed rows are no longer open.
+
+## Fresh result batching
+
+Removing the three-game slice did not remove the one-request-per-game cost.
+An unlimited fake provider could settle many games successfully while a key
+limited to five requests per minute still stopped after five distinct games.
+The earlier button test had five picks on four games, and did not model that quota.
+
+Production settlement now calls the documented Games endpoint with season and
+date filters, `per_page=100`, and `Cache-Control: no-cache`. Neighboring dates
+cover provider/Central date boundaries. Only requested pending IDs are used;
+multiple picks on one game reuse its verified result. Pagination is followed
+without retries. Each retrieved page passes the same game/season/team/status
+validation as individual verification. Retrieval timestamps are retained, and
+the financial service rejects expired verification before committing any payout.
+Games absent from date results get a fresh specific-ID lookup to cover moved
+dates or omitted season types. Failed lookups, stale pages, malformed identities,
+or provider errors fail closed.
+This path never reads the browsing cache. Placement still verifies one game.
+
+A regression clicks the actual Streamlit button with ten synthetic picks on
+nine distinct games and a transport that enforces a five-request budget. All ten
+settle using one provider request. Pagination, partial commits, HTTP 429/503,
+Retry-After, shared cooldown, and repeat-payment tests cover interrupted passes.
+
+`GET /health` and settlement responses expose `all_pending_fresh_batch_v1` as
+the workflow marker. Before submitting settlement, the UI checks this local
+health marker and explains when FastAPI needs restarting; that check makes no
+external provider request. Failure summaries include the stop reason and number
+of games checked out of the original pending set. No historical failure log was
+available to retrospectively prove the cause of an individual user's clicks.
+
+Provider reference: [Games endpoint and account tiers](https://docs.balldontlie.io/#games).
 
 A measured comparison used the private pre-fix source and a mocked transport,
 not live traffic. Schedule reads at t=0/16/32/48, one verification, and the success

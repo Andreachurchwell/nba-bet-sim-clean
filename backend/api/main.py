@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from .routers import games, results, bets, seasons
 from .core.config import DEFAULT_SEASON
 from .core import config
-from .services.betting import BetError
+from .services.betting import BetError, SETTLEMENT_WORKFLOW
 from fastapi.responses import JSONResponse
 
 
@@ -23,7 +23,8 @@ async def storage_error(request, exc):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "season_id": DEFAULT_SEASON, "read_only": config.MAINTENANCE_READ_ONLY}
+    return {"status": "ok", "season_id": DEFAULT_SEASON, "read_only": config.MAINTENANCE_READ_ONLY,
+            "settlement_workflow": SETTLEMENT_WORKFLOW}
 
 app.include_router(games.router)
 app.include_router(results.router)

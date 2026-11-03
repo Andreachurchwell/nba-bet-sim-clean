@@ -29,9 +29,10 @@ STATES = {
 
 
 class FeedUnavailable(Exception):
-    def __init__(self, message, retry_after=None):
+    def __init__(self, message, retry_after=None, code="provider_unavailable"):
         super().__init__(message)
         self.retry_after = retry_after
+        self.code = code
 
 
 def normalize_game(raw: dict) -> dict:
@@ -73,7 +74,7 @@ def normalize_game(raw: dict) -> dict:
         "id": raw.get("id"), "provider_season": raw.get("season"),
         "provider_date": provider_date, "date": local.date().isoformat() if local else provider_date,
         "datetime_utc": local.astimezone(timezone.utc).isoformat() if local else None,
-        "tipoff_local": local.strftime("%b %d · %I:%M %p %Z") if local else "Time TBD · America/Chicago",
+        "tipoff_local": local.strftime("%b %d Â· %I:%M %p %Z") if local else "Time TBD Â· America/Chicago",
         "timezone": "America/Chicago", "time_verified": local is not None,
         "home": home.get("abbreviation") or "TBD", "away": away.get("abbreviation") or "TBD",
         "home_name": home.get("full_name") or home.get("abbreviation") or "Team TBD",
@@ -116,7 +117,7 @@ class LiveNBAClient:
         if remaining > 0:
             return FeedUnavailable(
                 f"The NBA provider needs a short break. Please retry in {remaining} seconds. Fresh picks remain paused; your funds are unchanged.",
-                retry_after=remaining)
+                retry_after=remaining, code="cooldown")
         return None
 
     def _retry_delay(self, response, default):
@@ -147,9 +148,10 @@ class LiveNBAClient:
             default = 60 if response.status_code in (401, 403, 429) else 10
             delay = self._retry_delay(response, default)
             self.retry_until = monotonic() + delay
+            reason = "rate limit reached" if response.status_code == 429 else "request failed"
             raise FeedUnavailable(
-                f"The NBA provider needs a short break. Please retry in {delay} seconds. Fresh picks remain paused; your funds are unchanged.",
-                retry_after=delay)
+                f"NBA provider {reason} (HTTP {response.status_code}). Please retry in {delay} seconds. Fresh picks remain paused; your funds are unchanged.",
+                retry_after=delay, code="rate_limit" if response.status_code == 429 else "provider_error")
         return response
 
     def _retrieve(self, season, start, end):
@@ -219,35 +221,103 @@ class LiveNBAClient:
             if not 0 <= int(response.headers.get("Age", "0")) <= 15:
                 raise FeedUnavailable("The provider response is stale. Please try again later.")
             raw = response.json().get("data")
-            if not isinstance(raw, dict) or raw.get("id") != game_id or raw.get("season") != 2026:
-                raise FeedUnavailable("NBA game identity or season could not be verified.")
-            home, away = raw.get("home_team"), raw.get("visitor_team")
-            if not isinstance(home, dict) or not isinstance(away, dict):
-                raise FeedUnavailable("NBA teams could not be verified.")
-            import re
-            for team in (home, away):
-                if type(team.get("id")) is not int or team["id"] <= 0 or not re.fullmatch(r"[A-Z]{2,4}", str(team.get("abbreviation", ""))):
-                    raise FeedUnavailable("NBA team identity could not be verified.")
-            if home["id"] == away["id"] or home["abbreviation"] == away["abbreviation"]:
-                raise FeedUnavailable("NBA participating teams are inconsistent.")
-            if raw.get("home_team_id", home["id"]) != home["id"] or raw.get("visitor_team_id", away["id"]) != away["id"]:
-                raise FeedUnavailable("NBA team IDs disagree within the provider response.")
-            if raw.get("status_state") == "scheduled" and (
-                (raw.get("period") or 0) != 0 or raw.get("canceled") or raw.get("cancelled")
-                or any(word in str(raw.get("status") or "").lower() for word in ("final", "qtr", "halftime", "overtime"))
-            ):
-                raise FeedUnavailable("NBA game status is inconsistent. Picks remain blocked.")
-            game = normalize_game(raw)
-            # Financial eligibility uses the explicit lifecycle field, not a
-            # guessed state from free-form text.
-            game["status_state"] = str(raw.get("status_state") or "unknown").lower()
-            if raw.get("postponed"):
-                game["status_state"] = "postponed"
-            game.update(home_team_id=home["id"], away_team_id=away["id"],
-                        verified_at=datetime.now(timezone.utc).isoformat())
-            return game
+            return self._verified_payload(raw, game_id)
         except (requests.RequestException, ValueError, TypeError, AttributeError):
             raise FeedUnavailable("Fresh NBA verification is unavailable. Please retry; no questionable bet will be accepted.") from None
+
+    def verify_games(self, game_dates):
+        """Fresh paginated date queries for settlement only; never browsing cache.
+
+        Yield each requested ID once so its bets can commit before fetching a
+        later page. Neighboring dates cover provider/Central date boundaries.
+        """
+        if not game_dates:
+            return
+        parsed = urlsplit(self.endpoint)
+        if (parsed.scheme, parsed.netloc, parsed.path) not in {
+            ("https", "api.balldontlie.io", "/v1/games"),
+            ("https", "api.balldontlie.io", "/nba/v1/games"),
+        } or parsed.query or parsed.fragment or not self.key:
+            raise FeedUnavailable("Fresh NBA verification is not configured.")
+        remaining = set(game_dates)
+        for game_id in game_dates:
+            if game_id not in remaining:
+                continue
+            try:
+                day = date.fromisoformat(game_dates[game_id])
+                params = {"seasons[]": [2026], "per_page": 100,
+                          "dates[]": [(day + timedelta(days=n)).isoformat() for n in (-1, 0, 1)]}
+                cursors = set()
+                while True:
+                    with self.lock:
+                        response = self._request(self.endpoint, params=params.copy(),
+                            headers={"Authorization": self.key, "Cache-Control": "no-cache"},
+                            timeout=(3, 10), allow_redirects=False)
+                    if response.status_code != 200:
+                        raise FeedUnavailable("Fresh NBA result retrieval failed; remaining picks stay pending.")
+                    if not 0 <= int(response.headers.get("Age", "0")) <= 15:
+                        raise FeedUnavailable("The provider result response is stale; remaining picks stay pending.")
+                    payload = response.json()
+                    rows = payload.get("data")
+                    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+                        raise FeedUnavailable("Unexpected NBA results response; no results were guessed.")
+                    ids = [row.get("id") for row in rows]
+                    if any(type(i) is not int or i <= 0 for i in ids) or len(ids) != len(set(ids)):
+                        raise FeedUnavailable("NBA result identities are invalid or duplicated.")
+                    # Validate all relevant results before yielding this page.
+                    # Keep their retrieval timestamps: iteration never renews freshness.
+                    verified = [(row["id"], self._verified_payload(row, row["id"]))
+                                for row in rows if row["id"] in remaining]
+                    for identity, game in verified:
+                        remaining.remove(identity)
+                        yield identity, game
+                    if not remaining:
+                        return
+                    cursor = (payload.get("meta") or {}).get("next_cursor")
+                    if cursor is None:
+                        break
+                    if type(cursor) is not int or cursor <= 0 or cursor in cursors:
+                        raise FeedUnavailable("NBA results pagination is incomplete; remaining picks stay pending.")
+                    cursors.add(cursor)
+                    params["cursor"] = cursor
+                if game_id in remaining:
+                    # A rescheduled game can move outside its stored date;
+                    # list filters may also omit a season type. Verify that
+                    # exact ID freshly rather than guessing or dropping it.
+                    game = self.verify_game(game_id)
+                    remaining.remove(game_id)
+                    yield game_id, game
+            except (requests.RequestException, ValueError, TypeError, AttributeError):
+                raise FeedUnavailable("Fresh NBA results could not be verified; remaining picks stay pending.") from None
+
+    def _verified_payload(self, raw, game_id):
+        if not isinstance(raw, dict) or raw.get("id") != game_id or raw.get("season") != 2026:
+            raise FeedUnavailable("NBA game identity or season could not be verified.")
+        home, away = raw.get("home_team"), raw.get("visitor_team")
+        if not isinstance(home, dict) or not isinstance(away, dict):
+            raise FeedUnavailable("NBA teams could not be verified.")
+        import re
+        for team in (home, away):
+            if type(team.get("id")) is not int or team["id"] <= 0 or not re.fullmatch(r"[A-Z]{2,4}", str(team.get("abbreviation", ""))):
+                raise FeedUnavailable("NBA team identity could not be verified.")
+        if home["id"] == away["id"] or home["abbreviation"] == away["abbreviation"]:
+            raise FeedUnavailable("NBA participating teams are inconsistent.")
+        if raw.get("home_team_id", home["id"]) != home["id"] or raw.get("visitor_team_id", away["id"]) != away["id"]:
+            raise FeedUnavailable("NBA team IDs disagree within the provider response.")
+        if raw.get("status_state") == "scheduled" and (
+            (raw.get("period") or 0) != 0 or raw.get("canceled") or raw.get("cancelled")
+            or any(word in str(raw.get("status") or "").lower() for word in ("final", "qtr", "halftime", "overtime"))
+        ):
+            raise FeedUnavailable("NBA game status is inconsistent. Picks remain blocked.")
+        game = normalize_game(raw)
+        # Financial eligibility uses the explicit lifecycle field, not a
+        # guessed state from free-form text.
+        game["status_state"] = str(raw.get("status_state") or "unknown").lower()
+        if raw.get("postponed"):
+            game["status_state"] = "postponed"
+        game.update(home_team_id=home["id"], away_team_id=away["id"],
+                    verified_at=datetime.now(timezone.utc).isoformat())
+        return game
 
     def read(self, season: str, anchor: date, days_back=3, days_ahead=7) -> dict:
         if season != "2026-27":
